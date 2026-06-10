@@ -125,21 +125,27 @@ if [[ ${SKIP_AMRFINDER_DB} -eq 1 ]]; then
   warn "skipping AMRFinderPlus DB download (--skip-amrfinder-db)"
 else
   AMRFINDER="${ENV_BIN}/amrfinder"
+  # Install into the SHARED databases dir (matches config.py amrfinder_db default
+  # and the kraken2 DB convention) so it survives env rebuilds and is shared
+  # across hosts. Override with AMRFINDER_DB_DEST. amrfinder_update -d <parent>
+  # writes <parent>/<version>/ and a <parent>/latest symlink.
+  AMRFINDER_DB_DEST="${AMRFINDER_DB_DEST:-/srv/kapurlab/databases/amrfinderplus}"
   if [[ ! -x "${AMRFINDER}" ]]; then
     warn "amrfinder not found in env — DB step skipped (re-run after env build completes)"
+  elif [[ -f "${AMRFINDER_DB_DEST}/latest/version.txt" ]]; then
+    ok "AMRFinderPlus DB already present: ${AMRFINDER_DB_DEST}/latest"
+  elif mkdir -p "${AMRFINDER_DB_DEST}" 2>/dev/null && [[ -w "${AMRFINDER_DB_DEST}" ]]; then
+    log "downloading AMRFinderPlus DB into ${AMRFINDER_DB_DEST}"
+    run "${ENV_BIN}/amrfinder_update" -d "${AMRFINDER_DB_DEST}" \
+      || run "${AMRFINDER}" -u   # fall back to the env-default location
+    [[ -d "${AMRFINDER_DB_DEST}/latest" ]] && run du -sh "${AMRFINDER_DB_DEST}/latest" || true
   else
-    DB_DIR="$("${AMRFINDER}" -V 2>&1 | grep -oE '/[^ ]*amrfinderplus/data/[^ ]+' | head -1 || true)"
-    if [[ -n "${DB_DIR}" && -d "${DB_DIR}" ]]; then
-      ok "AMRFinderPlus DB already present: ${DB_DIR}"
-    else
-      log "downloading AMRFinderPlus DB (amrfinder -u)"
-      run "${AMRFINDER}" -u
-    fi
-    log "AMRFinderPlus version + DB:"
-    run "${AMRFINDER}" -V || true
-    DB_DIR2="$("${AMRFINDER}" -V 2>&1 | grep -oE '/[^ ]*amrfinderplus/data/[^ ]+' | head -1 || true)"
-    [[ -n "${DB_DIR2}" && -d "${DB_DIR2}" ]] && run du -sh "${DB_DIR2}" || true
+    warn "${AMRFINDER_DB_DEST} not writable — installing DB to the env default instead"
+    log "downloading AMRFinderPlus DB (amrfinder -u)"
+    run "${AMRFINDER}" -u
   fi
+  log "AMRFinderPlus version + DB:"
+  run "${AMRFINDER}" -V -d "${AMRFINDER_DB_DEST}/latest" 2>/dev/null || run "${AMRFINDER}" -V || true
 fi
 
 # ---------------------------------------------------------------------------

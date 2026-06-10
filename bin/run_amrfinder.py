@@ -99,9 +99,34 @@ def build_amrfinder_command(
         cmd += ["-O", organism]
     if use_plus:
         cmd += ["--plus"]
-    if amrfinder_db:
+    # Only pin -d when the path is a *real* AMRFinderPlus DB. A configured-but-
+    # missing path (e.g. the informative default before the shared DB is
+    # installed) would make amrfinder abort with "No valid AMRFinder database".
+    # When invalid/empty we omit -d and let amrfinder resolve its own DB via
+    # $CONDA_PREFIX/share/amrfinderplus/data/latest (the OOD launcher sets it).
+    if amrfinder_db and _is_valid_amrfinder_db(amrfinder_db):
         cmd += ["-d", amrfinder_db]
+    elif amrfinder_db:
+        print(f"WARNING: configured amrfinder_db is not a valid DB ({amrfinder_db}); "
+              "omitting -d and using the env's bundled DB instead.", flush=True)
     return cmd
+
+
+def _is_valid_amrfinder_db(path: str) -> bool:
+    """True if `path` (a dir or symlink to one) holds an AMRFinderPlus DB.
+
+    A built DB dir carries a version stamp plus the indexed reference files;
+    checking for the version file + an AMRProt index is enough to distinguish a
+    real DB from a missing/empty path."""
+    try:
+        d = Path(path).resolve()
+    except OSError:
+        return False
+    if not d.is_dir():
+        return False
+    has_version = (d / "version.txt").is_file()
+    has_refs = any(d.glob("AMRProt*")) or any(d.glob("AMR_CDS*"))
+    return has_version and has_refs
 
 
 def run(

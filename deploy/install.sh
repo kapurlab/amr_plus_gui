@@ -64,6 +64,16 @@ CONDA="${CONDA_BASE}/bin/conda"
 [[ -x "${CONDA}" ]] || CONDA="$(command -v conda 2>/dev/null || true)"
 [[ -n "${CONDA}" && -x "${CONDA}" ]] || die "conda not found. Install miniforge to ${CONDA_BASE} or pass --conda-base."
 ok "conda: ${CONDA}"
+# Prefer mamba for env creation — clearer progress and a faster solve on big
+# bioconda envs. Falls back to conda (which on this box already uses the
+# libmamba solver). Override with CONDA_FRONTEND=conda.
+CONDA_FRONTEND="${CONDA_FRONTEND:-}"
+if [[ -z "${CONDA_FRONTEND}" ]]; then
+  if [[ -x "${CONDA_BASE}/bin/mamba" ]]; then CONDA_FRONTEND="${CONDA_BASE}/bin/mamba"
+  elif command -v mamba >/dev/null 2>&1; then CONDA_FRONTEND="$(command -v mamba)"
+  else CONDA_FRONTEND="${CONDA}"; fi
+fi
+ok "env builder: ${CONDA_FRONTEND}"
 
 ENV_FILE="${REPO_DIR}/conda_setup/environment.yml"
 if [[ ${USE_PERSONAL} -eq 1 ]]; then
@@ -83,8 +93,14 @@ fi
 if [[ "${ENV_EXISTS}" -eq 1 ]]; then
   ok "${ENV_DESC} already exists — skipping create"
 else
-  log "creating ${ENV_DESC} from ${ENV_FILE} (this is slow)"
-  run "${CONDA}" env create "${CREATE_FLAG[@]}" -f "${ENV_FILE}"
+  # A prior run cancelled mid-solve leaves a partial env dir with no python;
+  # env create would then abort with "prefix already exists". Clear it first.
+  if [[ ${USE_PERSONAL} -eq 0 && -d "${SHARED_ENV}" ]]; then
+    warn "removing incomplete env at ${SHARED_ENV} (no python found)"
+    run rm -rf "${SHARED_ENV}"
+  fi
+  log "creating ${ENV_DESC} from ${ENV_FILE} (solve can take 2-5 min)"
+  run "${CONDA_FRONTEND}" env create "${CREATE_FLAG[@]}" -f "${ENV_FILE}"
 fi
 
 PYTHON="${ENV_BIN}/python"

@@ -88,6 +88,11 @@ else
 fi
 
 PYTHON="${ENV_BIN}/python"
+# Put the env's bin on PATH for every tool call below. amrfinder needs its
+# BLAST+/HMMER deps on PATH, and the `mlst` check is a Perl script whose
+# `#!/usr/bin/env perl` shebang must resolve to the env Perl (which carries
+# List::MoreUtils), not system Perl. The OOD session sets PATH the same way.
+if [[ -d "${ENV_BIN}" ]]; then export PATH="${ENV_BIN}:${PATH}"; fi
 log "pip install backend requirements into ${ENV_DESC}"
 run "${PYTHON}" -m pip install -r "${REPO_DIR}/backend/requirements.txt"
 

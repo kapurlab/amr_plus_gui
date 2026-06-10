@@ -217,6 +217,58 @@ def _expected_genome_size(species: Optional[str]):
 
 
 # ---------------------------------------------------------------------------
+# Input-file QC (seqkit stats on the raw reads) — the "quality stats of the
+# input files" surfaced in the report and stats workbook.
+# ---------------------------------------------------------------------------
+def fastq_qc(r1: Optional[Path], r2: Optional[Path], outdir: Path) -> Dict[str, Any]:
+    """Run `seqkit stats -a` on the input reads -> fastq_qc.json.
+
+    -a adds Q20(%)/Q30(%)/AvgQual/GC(%) alongside counts/lengths/N50, giving the
+    read-quality metrics a defensible report needs."""
+    qc: Dict[str, Any] = {"files": {}, "notes": []}
+    inputs = [("R1", r1), ("R2", r2)]
+    if not _have("seqkit"):
+        qc["notes"].append("seqkit not on PATH — input read QC unavailable.")
+        (outdir / "fastq_qc.json").write_text(json.dumps(qc, indent=2) + "\n", encoding="utf-8")
+        return qc
+    for tag, path in inputs:
+        if not path:
+            continue
+        try:
+            proc = subprocess.run(
+                ["seqkit", "stats", "-T", "-a", str(path)],
+                capture_output=True, text=True, timeout=600,
+            )
+            lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            if len(lines) >= 2:
+                row = dict(zip(lines[0].split("\t"), lines[1].split("\t")))
+
+                def num(k):
+                    try:
+                        return float(str(row.get(k, "")).replace(",", ""))
+                    except (ValueError, AttributeError):
+                        return None
+
+                qc["files"][tag] = {
+                    "file": Path(path).name,
+                    "num_seqs": num("num_seqs"),
+                    "sum_len": num("sum_len"),
+                    "min_len": num("min_len"),
+                    "avg_len": num("avg_len"),
+                    "max_len": num("max_len"),
+                    "n50": num("N50"),
+                    "gc_pct": num("GC(%)"),
+                    "q20_pct": num("Q20(%)"),
+                    "q30_pct": num("Q30(%)"),
+                    "avg_qual": row.get("AvgQual", "").strip() or None,
+                }
+        except (subprocess.SubprocessError, OSError) as exc:
+            qc["notes"].append(f"seqkit stats failed for {tag}: {exc}")
+    (outdir / "fastq_qc.json").write_text(json.dumps(qc, indent=2) + "\n", encoding="utf-8")
+    return qc
+
+
+# ---------------------------------------------------------------------------
 # Step 4 — MLST corroboration
 # ---------------------------------------------------------------------------
 def run_mlst(assembly: Path, outdir: Path, sample: str) -> Optional[Path]:
@@ -297,6 +349,13 @@ def main(argv=None) -> int:
     if not args.assembly and not args.r1:
         log("ERROR: provide either --assembly or -r1 (reads).")
         return 2
+
+    # ---- Input file QC (raw reads) ----
+    if args.r1:
+        step("Input file QC (seqkit stats on reads)")
+        fq = fastq_qc(args.r1, args.r2, outdir)
+        for tag, s in (fq.get("files") or {}).items():
+            log(f"  {tag}: {s.get('num_seqs')} reads, Q30 {s.get('q30_pct')}%, GC {s.get('gc_pct')}%")
 
     # ---- Step 1: Kraken2 organism detection ----
     kraken_report: Optional[Path] = None
@@ -381,11 +440,20 @@ def main(argv=None) -> int:
     )
 
     rc = manifest.get("return_code", 1)
+    if manifest.get("stxtyper_active"):
+        log("StxTyper ran (Escherichia + --plus): Stx subtypes are in the AMRFinderPlus output.")
+
+    # ---- Step 6: Report (stats workbook + PDF) ----
+    step("Step 6: Building report (stats.xlsx + report.pdf)")
+    try:
+        import reporting  # bin/ is on PYTHONPATH
+        reporting.build(outdir, args.sample, log=log)
+    except Exception as exc:  # noqa: BLE001 — never fail the run over the report
+        log(f"  WARNING: report generation failed: {exc}")
+
     step("Pipeline completed")
     log(f"AMRFinderPlus return code: {rc}")
     log(f"Outputs in: {outdir}")
-    if manifest.get("stxtyper_active"):
-        log("StxTyper ran (Escherichia + --plus): Stx subtypes are in the AMRFinderPlus output.")
     return 0 if rc == 0 else rc
 
 

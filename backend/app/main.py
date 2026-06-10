@@ -1143,6 +1143,12 @@ def _result_category(rel: str) -> Optional[str]:
     if name.endswith(".fastq.gz"):
         return None
 
+    if name == "report.pdf":
+        return "report_pdf"
+    if name.endswith("_stats.xlsx"):
+        return "stats_xlsx"
+    if name == "fastq_qc.json":
+        return "fastq_qc"
     if name == "amrfinder.tsv":
         return "amrfinder_tsv"
     if name == "mutation_all.tsv":
@@ -1167,25 +1173,31 @@ def _result_category(rel: str) -> Optional[str]:
 
 
 _CATEGORY_ORDER = {
-    "amrfinder_tsv": 0,
-    "mutation_all": 1,
-    "organism_detection": 2,
-    "qc": 3,
-    "mlst": 4,
-    "assembly_fasta": 5,
-    "krona": 6,
-    "kraken_report": 7,
-    "run_manifest": 8,
+    "report_pdf": 0,
+    "stats_xlsx": 1,
+    "amrfinder_tsv": 2,
+    "mutation_all": 3,
+    "organism_detection": 4,
+    "qc": 5,
+    "fastq_qc": 6,
+    "mlst": 7,
+    "assembly_fasta": 8,
+    "krona": 9,
+    "kraken_report": 10,
+    "run_manifest": 11,
     "log": 99,
 }
 
 
 def _result_label(rel: str, category: Optional[str]) -> str:
     return {
+        "report_pdf": "Report (PDF)",
+        "stats_xlsx": "Statistics workbook (Excel)",
         "amrfinder_tsv": "AMRFinderPlus results (TSV)",
         "mutation_all": "All assessed mutations (TSV)",
         "organism_detection": "Organism detection (JSON)",
         "qc": "Assembly QC (JSON)",
+        "fastq_qc": "Input read QC (JSON)",
         "mlst": "MLST result",
         "assembly_fasta": "Assembly FASTA",
         "krona": "Krona taxonomy report",

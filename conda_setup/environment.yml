@@ -20,6 +20,9 @@ dependencies:
   - pandas
   - openpyxl
   - biopython
+  - matplotlib-base      # report figures
+  - reportlab            # PDF report (pure-Python; no headless browser)
+  - pillow               # image sizing in the PDF
 
   # AMR / organism-resolution toolchain
   - ncbi-amrfinderplus   # AMRFinderPlus + StxTyper

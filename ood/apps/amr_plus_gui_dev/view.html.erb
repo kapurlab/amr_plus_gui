@@ -1,0 +1,12 @@
+<%- if host && port -%>
+<div class="d-flex flex-column gap-3 py-2">
+  <div class="d-flex gap-3 justify-content-center">
+    <a href="/rnode/<%= host %>/<%= port %>/" target="_blank" class="btn btn-warning btn-lg px-4">
+      🧪 Open AMRFinderPlus (dev)
+    </a>
+  </div>
+  <p class="text-center text-muted small mb-0">
+    Development session — not for production data.
+  </p>
+</div>
+<%- end -%>

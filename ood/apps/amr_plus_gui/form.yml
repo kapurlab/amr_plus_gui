@@ -1,0 +1,11 @@
+---
+cluster: "wgs3"
+form:
+  - bc_num_hours
+attributes:
+  bc_num_hours:
+    widget: "number_field"
+    label: "Session duration (hours)"
+    value: 8
+    min: 1
+    max: 48

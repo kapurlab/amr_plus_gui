@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# install.sh — idempotent, no-sudo deployment of the AMRFinderPlus GUI.
+#
+# Mirrors the Kraken/vSNP sandbox pattern. Every heavy step is skippable and
+# clearly logged. Safe to re-run.
+#
+# What it does:
+#   1. Locate/create the conda env (shared at <repo>/env, else personal amr_plus).
+#   2. pip install backend/requirements.txt into that env.
+#   3. amrfinder -u  -> download the AMRFinderPlus DB (skip if present).
+#   4. Ensure a Kraken2 DB (PlusPF preferred; reuse existing if present).
+#   5. Ensure mlst / PubMLST data is reachable.
+#   6. Build the React frontend (frontend/dist/).
+#
+# Usage:
+#   deploy/install.sh [--personal] [--kraken-db DIR] [--skip-amrfinder-db]
+#                     [--skip-kraken-db] [--skip-frontend] [--dry-run]
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ---- defaults ----
+SHARED_ENV="${REPO_DIR}/env"
+PERSONAL_ENV_NAME="amr_plus"
+CONDA_BASE="${HOME}/miniforge3"
+USE_PERSONAL=0
+KRAKEN_DB_DIR=""
+KRAKEN_PLUSPF_DEFAULT="/srv/kapurlab/databases/kraken2/k2_standard_pluspf"
+KRAKEN_STD_FALLBACK="/srv/kapurlab/databases/kraken2/k2_standard_08gb"
+KRAKEN_PLUSPF_URL="https://genome-idx.s3.amazonaws.com/kraken/k2_standard_20240904.tar.gz"
+SKIP_AMRFINDER_DB=0
+SKIP_KRAKEN_DB=0
+SKIP_FRONTEND=0
+DRY_RUN=0
+
+log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+ok()   { printf '\033[1;32m  ok\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m  !!\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31mERROR\033[0m %s\n' "$*" >&2; exit 1; }
+run()  { if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] $*"; else "$@"; fi; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --personal)           USE_PERSONAL=1; shift;;
+    --kraken-db)          KRAKEN_DB_DIR="$2"; shift 2;;
+    --conda-base)         CONDA_BASE="$2"; shift 2;;
+    --skip-amrfinder-db)  SKIP_AMRFINDER_DB=1; shift;;
+    --skip-kraken-db)     SKIP_KRAKEN_DB=1; shift;;
+    --skip-frontend)      SKIP_FRONTEND=1; shift;;
+    --dry-run)            DRY_RUN=1; shift;;
+    -h|--help)            sed -n '2,30p' "$0"; exit 0;;
+    *) die "unknown arg: $1";;
+  esac
+done
+
+log "AMRFinderPlus GUI install"
+echo "  repo:  ${REPO_DIR}"
+[[ ${DRY_RUN} -eq 1 ]] && warn "DRY RUN — no changes will be made"
+
+# ---------------------------------------------------------------------------
+# 1. conda env
+# ---------------------------------------------------------------------------
+CONDA="${CONDA_BASE}/bin/conda"
+[[ -x "${CONDA}" ]] || CONDA="$(command -v conda 2>/dev/null || true)"
+[[ -n "${CONDA}" && -x "${CONDA}" ]] || die "conda not found. Install miniforge to ${CONDA_BASE} or pass --conda-base."
+ok "conda: ${CONDA}"
+
+ENV_FILE="${REPO_DIR}/conda_setup/environment.yml"
+if [[ ${USE_PERSONAL} -eq 1 ]]; then
+  ENV_REF=("-n" "${PERSONAL_ENV_NAME}")
+  ENV_BIN="$("${CONDA}" run -n "${PERSONAL_ENV_NAME}" sh -c 'echo $CONDA_PREFIX/bin' 2>/dev/null || true)"
+  ENV_DESC="personal env ${PERSONAL_ENV_NAME}"
+  ENV_EXISTS=$("${CONDA}" env list | awk '{print $1}' | grep -qx "${PERSONAL_ENV_NAME}" && echo 1 || echo 0)
+  CREATE_FLAG=("-n" "${PERSONAL_ENV_NAME}")
+else
+  ENV_REF=("-p" "${SHARED_ENV}")
+  ENV_BIN="${SHARED_ENV}/bin"
+  ENV_DESC="shared env ${SHARED_ENV}"
+  ENV_EXISTS=$([[ -x "${SHARED_ENV}/bin/python" ]] && echo 1 || echo 0)
+  CREATE_FLAG=("-p" "${SHARED_ENV}")
+fi
+
+if [[ "${ENV_EXISTS}" -eq 1 ]]; then
+  ok "${ENV_DESC} already exists — skipping create"
+else
+  log "creating ${ENV_DESC} from ${ENV_FILE} (this is slow)"
+  run "${CONDA}" env create "${CREATE_FLAG[@]}" -f "${ENV_FILE}"
+fi
+
+PYTHON="${ENV_BIN}/python"
+log "pip install backend requirements into ${ENV_DESC}"
+run "${PYTHON}" -m pip install -r "${REPO_DIR}/backend/requirements.txt"
+
+# ---------------------------------------------------------------------------
+# 2. AMRFinderPlus database
+# ---------------------------------------------------------------------------
+if [[ ${SKIP_AMRFINDER_DB} -eq 1 ]]; then
+  warn "skipping AMRFinderPlus DB download (--skip-amrfinder-db)"
+else
+  AMRFINDER="${ENV_BIN}/amrfinder"
+  if [[ ! -x "${AMRFINDER}" ]]; then
+    warn "amrfinder not found in env — DB step skipped (re-run after env build completes)"
+  else
+    DB_DIR="$("${AMRFINDER}" -V 2>&1 | grep -oE '/[^ ]*amrfinderplus/data/[^ ]+' | head -1 || true)"
+    if [[ -n "${DB_DIR}" && -d "${DB_DIR}" ]]; then
+      ok "AMRFinderPlus DB already present: ${DB_DIR}"
+    else
+      log "downloading AMRFinderPlus DB (amrfinder -u)"
+      run "${AMRFINDER}" -u
+    fi
+    log "AMRFinderPlus version + DB:"
+    run "${AMRFINDER}" -V || true
+    DB_DIR2="$("${AMRFINDER}" -V 2>&1 | grep -oE '/[^ ]*amrfinderplus/data/[^ ]+' | head -1 || true)"
+    [[ -n "${DB_DIR2}" && -d "${DB_DIR2}" ]] && run du -sh "${DB_DIR2}" || true
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Kraken2 database
+# ---------------------------------------------------------------------------
+if [[ ${SKIP_KRAKEN_DB} -eq 1 ]]; then
+  warn "skipping Kraken2 DB check (--skip-kraken-db)"
+else
+  if [[ -z "${KRAKEN_DB_DIR}" ]]; then
+    if [[ -d "${KRAKEN_PLUSPF_DEFAULT}" ]]; then
+      KRAKEN_DB_DIR="${KRAKEN_PLUSPF_DEFAULT}"
+    elif [[ -d "${KRAKEN_STD_FALLBACK}" ]]; then
+      KRAKEN_DB_DIR="${KRAKEN_STD_FALLBACK}"
+    fi
+  fi
+  if [[ -n "${KRAKEN_DB_DIR}" && -f "${KRAKEN_DB_DIR}/hash.k2d" ]]; then
+    ok "Kraken2 DB present: ${KRAKEN_DB_DIR}"
+  else
+    warn "no Kraken2 DB found at ${KRAKEN_PLUSPF_DEFAULT} or ${KRAKEN_STD_FALLBACK}."
+    warn "To install PlusPF (large): "
+    echo "    mkdir -p ${KRAKEN_PLUSPF_DEFAULT}"
+    echo "    curl -L '${KRAKEN_PLUSPF_URL}' | tar -xz -C ${KRAKEN_PLUSPF_DEFAULT}"
+    warn "Organism detection from reads is skipped at runtime until a DB exists."
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 4. mlst / PubMLST
+# ---------------------------------------------------------------------------
+if [[ -x "${ENV_BIN}/mlst" ]]; then
+  ok "mlst present: $("${ENV_BIN}/mlst" --version 2>&1 | head -1)"
+  "${ENV_BIN}/mlst" --list >/dev/null 2>&1 && ok "PubMLST schemes reachable" \
+    || warn "mlst installed but scheme list unavailable; check the bundled db."
+else
+  warn "mlst not in env — MLST corroboration will be skipped at runtime."
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Frontend build
+# ---------------------------------------------------------------------------
+if [[ ${SKIP_FRONTEND} -eq 1 ]]; then
+  warn "skipping frontend build (--skip-frontend)"
+else
+  log "building React frontend"
+  pushd "${REPO_DIR}/frontend" >/dev/null
+  if command -v npm >/dev/null 2>&1; then
+    run npm ci || run npm install
+    run npm run build
+  elif [[ -x node_modules/.bin/vite ]]; then
+    run node_modules/.bin/vite build
+  else
+    # Reuse the sibling Kraken GUI's node_modules if ours is missing.
+    SIB="/srv/kapurlab/tools/kraken_id_parse_gui/frontend/node_modules"
+    if [[ -d "${SIB}" && ! -e node_modules ]]; then
+      run ln -s "${SIB}" node_modules
+      run node_modules/.bin/vite build
+    else
+      warn "no npm and no node_modules — frontend not built. Install Node and re-run."
+    fi
+  fi
+  popd >/dev/null
+  [[ -f "${REPO_DIR}/frontend/dist/index.html" ]] && ok "frontend built: ${REPO_DIR}/frontend/dist/"
+fi
+
+log "Done. Register the OOD app (see deploy/INSTALL.md) and launch a session."
+echo "  Backend entry:  ${REPO_DIR}/backend/app/main.py (uvicorn app.main:app)"
+echo "  Env python:     ${PYTHON}"

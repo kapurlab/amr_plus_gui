@@ -1,0 +1,48 @@
+# Environment for the AMRFinderPlus GUI.
+# Install (shared) with:
+#   conda env create -p /srv/kapurlab/tools/amr_plus_gui/env -f conda_setup/environment.yml
+# or (personal) with:
+#   conda env create -f conda_setup/environment.yml   # -> env name amr_plus
+#
+# After the env exists, run deploy/install.sh to download the AMRFinderPlus DB
+# (amrfinder -u), ensure the Kraken2 PlusPF DB, and build the frontend.
+name: amr_plus
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+
+dependencies:
+  # Core Python
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - openpyxl
+  - biopython
+
+  # AMR / organism-resolution toolchain
+  - ncbi-amrfinderplus   # AMRFinderPlus + StxTyper
+  - mlst                 # MLST corroboration (PubMLST schemes)
+  - kraken2              # organism detection from reads
+  - krakentools
+  - shovill              # preferred assembler
+  - spades               # assembler fallback (spades.py --isolate)
+  - seqkit               # assembly QC stats
+  - samtools
+
+  # Web backend (FastAPI serves the GUI under OOD)
+  - fastapi>=0.115.0
+  - uvicorn-standard
+  - aiofiles
+  - jinja2
+  - pyyaml
+
+  # pydantic v2 via pip to pin the major version
+  - pip:
+      - pydantic>=2.0.0
+
+# Notes:
+#  - StxTyper ships inside ncbi-amrfinderplus (auto-run for Escherichia -n --plus).
+#  - The AMRFinderPlus database is NOT bundled; `amrfinder -u` downloads it to
+#    $CONDA_PREFIX/share/amrfinderplus/data/latest (see deploy/install.sh).

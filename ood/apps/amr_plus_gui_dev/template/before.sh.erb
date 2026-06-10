@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# AMRFinderPlus GUI (dev) — per-session worktree from user-chosen branch.
+# Runs in the OOD parent process before script.sh is forked.
+# Sets $port (uvicorn) and $worktree_dir (passed to script.sh.erb).
+
+source_helpers
+
+port=$(find_port)
+export port
+
+# ----- Branch validation -----
+branch=<%= context.branch.to_s.strip.shellescape %>
+if [[ -z "$branch" ]]; then
+  echo "ERROR: branch field is empty" >&2
+  exit 1
+fi
+if [[ ! "$branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+  echo "ERROR: invalid branch name: $branch" >&2
+  exit 1
+fi
+
+# ----- Per-session worktree -----
+prod_repo=/srv/kapurlab/tools/amr_plus_gui
+session_tag=$(date +%Y%m%d_%H%M%S)_$$
+worktree_dir=/tmp/amr_plus_gui_dev_${session_tag}
+export worktree_dir
+
+echo "Port    — uvicorn:${port}"
+echo "Branch  — ${branch}"
+echo "Workdir — ${worktree_dir}"
+
+set -e
+saved_cwd="${PWD}"
+
+cd "${prod_repo}"
+fetch_exit=0
+git fetch origin "${branch}" 2>&1 || fetch_exit=$?
+if [[ ${fetch_exit} -ne 0 ]]; then
+  echo "WARN: git fetch origin ${branch} failed (exit ${fetch_exit})."
+  echo "      Falling back to whatever origin/${branch} is cached locally."
+fi
+if ! git rev-parse --verify --quiet "origin/${branch}" >/dev/null; then
+  echo "ERROR: origin/${branch} not available locally and fetch failed." >&2
+  echo "       Run: cd ${prod_repo} && git fetch origin ${branch}" >&2
+  exit 1
+fi
+git worktree add --detach "${worktree_dir}" "origin/${branch}"
+
+# Symlink node_modules from prod to avoid per-session reinstall
+if [[ -d "${prod_repo}/frontend/node_modules" && ! -e "${worktree_dir}/frontend/node_modules" ]]; then
+  ln -s "${prod_repo}/frontend/node_modules" "${worktree_dir}/frontend/node_modules"
+fi
+
+# Build frontend in the worktree
+cd "${worktree_dir}/frontend"
+if [[ -x node_modules/.bin/vite ]]; then
+  node_modules/.bin/vite build 2>&1 | tail -10
+else
+  echo "WARN: no node_modules — falling back to system npm" >&2
+  npm run build 2>&1 | tail -10
+fi
+set +e
+
+cd "${saved_cwd}"
+chmod +x ./script.sh 2>/dev/null || true
+
+# ----- Opportunistic cleanup of old worktrees (>24h) -----
+find /tmp -maxdepth 1 -name "amr_plus_gui_dev_*" -mtime +1 -print 2>/dev/null | while IFS= read -r stale; do
+  echo "Cleaning stale worktree: ${stale}"
+  git -C "${prod_repo}" worktree remove --force "${stale}" 2>/dev/null || rm -rf "${stale}"
+done

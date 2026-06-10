@@ -1,0 +1,9 @@
+
+# conda env + caches (never commit)
+env/
+__pycache__/
+backend/jobs/
+# build artifacts
+node_modules/
+frontend/dist/
+*.pyc

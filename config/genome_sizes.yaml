@@ -1,0 +1,48 @@
+# genome_sizes.yaml — expected assembled genome size (bp) per species, used for
+# the assembly-QC sanity check (total assembly length within tolerance of the
+# expected size). OPTIONAL: a species absent here simply skips the size check.
+# Keyed by "Genus species" (matched against the Kraken2 dominant species).
+#
+# `tolerance` is the fractional deviation that still counts as "pass"
+# (default 0.20 = ±20%). Values are approximate typical chromosome+plasmid
+# totals from NCBI RefSeq; tune for your panel.
+
+defaults:
+  tolerance: 0.20
+
+species:
+  "Acinetobacter baumannii": 3980000
+  "Bordetella pertussis": 4090000
+  "Burkholderia cepacia": 8500000
+  "Burkholderia mallei": 5800000
+  "Burkholderia pseudomallei": 7200000
+  "Campylobacter jejuni": 1660000
+  "Campylobacter coli": 1730000
+  "Citrobacter freundii": 5100000
+  "Clostridioides difficile": 4290000
+  "Corynebacterium diphtheriae": 2490000
+  "Enterobacter cloacae": 5300000
+  "Enterobacter asburiae": 4800000
+  "Enterococcus faecalis": 2880000
+  "Enterococcus faecium": 2900000
+  "Escherichia coli": 5000000
+  "Haemophilus influenzae": 1830000
+  "Klebsiella oxytoca": 6100000
+  "Klebsiella pneumoniae": 5500000
+  "Klebsiella aerogenes": 5300000
+  "Neisseria gonorrhoeae": 2150000
+  "Neisseria meningitidis": 2180000
+  "Pseudomonas aeruginosa": 6300000
+  "Salmonella enterica": 4850000
+  "Serratia marcescens": 5500000
+  "Staphylococcus aureus": 2820000
+  "Staphylococcus epidermidis": 2560000
+  "Staphylococcus pseudintermedius": 2600000
+  "Streptococcus agalactiae": 2160000
+  "Streptococcus pneumoniae": 2100000
+  "Streptococcus pyogenes": 1850000
+  "Vibrio cholerae": 4000000
+  "Vibrio parahaemolyticus": 5100000
+  "Vibrio vulnificus": 5000000
+  "Mycobacterium tuberculosis": 4410000
+  "Mycobacterium bovis": 4350000

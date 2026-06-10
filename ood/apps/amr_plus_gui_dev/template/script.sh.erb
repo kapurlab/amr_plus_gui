@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# AMRFinderPlus GUI (dev) OOD batch_connect script.
+# $port (uvicorn) and $worktree_dir are exported by before.sh.erb.
+
+echo "=== AMRFinderPlus GUI (dev) Session Starting ==="
+echo "uvicorn:${port}"
+echo "worktree:${worktree_dir}"
+
+SHARED_ENV=/srv/kapurlab/tools/amr_plus_gui/env
+PERSONAL_ENV=/home/${USER}/miniforge3/envs/amr_plus
+PERSONAL_BASE_PYTHON=/home/${USER}/miniforge3/bin/python
+
+if [ -d "${SHARED_ENV}" ] && [ -x "${SHARED_ENV}/bin/python" ]; then
+  AMR_ENV="${SHARED_ENV}"
+  PYTHON="${SHARED_ENV}/bin/python"
+elif [ -d "${PERSONAL_ENV}" ]; then
+  AMR_ENV="${PERSONAL_ENV}"
+  PYTHON="${PERSONAL_ENV}/bin/python"
+else
+  AMR_ENV=""
+  PYTHON="${PERSONAL_BASE_PYTHON}"
+fi
+
+# Dev override: prefer the per-session worktree if before.sh.erb set one.
+SHARED_AMR_GUI=/srv/kapurlab/tools/amr_plus_gui
+if [ -n "${worktree_dir}" ] && [ -d "${worktree_dir}/backend" ]; then
+  AMR_DIR="${worktree_dir}"
+else
+  AMR_DIR="${SHARED_AMR_GUI}"
+fi
+
+export PATH="${AMR_ENV}/bin:${PATH}"
+export PYTHONPATH="${AMR_DIR}/bin:${PYTHONPATH}"
+
+# Dev: build the frontend from the selected branch's source so UI changes are
+# served. Only runs in the per-session worktree (never the shared install).
+# The worktree's node_modules is gitignored/absent, so reuse the shared
+# install's via a symlink to keep `vite build` fast. Falls back to any
+# existing dist/ if the build fails (e.g. a branch that changed deps — then a
+# real `npm install` would be needed in the worktree).
+if [ -n "${worktree_dir}" ] && [ "${AMR_DIR}" = "${worktree_dir}" ] && [ -d "${AMR_DIR}/frontend" ]; then
+  if [ ! -e "${AMR_DIR}/frontend/node_modules" ] && [ -d "${SHARED_AMR_GUI}/frontend/node_modules" ]; then
+    ln -s "${SHARED_AMR_GUI}/frontend/node_modules" "${AMR_DIR}/frontend/node_modules"
+  fi
+  echo "Building frontend (vite) from worktree source…"
+  ( cd "${AMR_DIR}/frontend" && npm run build ) \
+    || echo "WARN: frontend build failed; serving existing dist/ if present."
+fi
+
+cd "${AMR_DIR}/backend"
+echo "Starting uvicorn on port ${port}"
+echo "  conda env: ${AMR_ENV}"
+echo "  amr_gui:   ${AMR_DIR}"
+exec $PYTHON -m uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port "${port}" \
+    --log-level info \
+    --reload \
+    --reload-dir app

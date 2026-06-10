@@ -1,0 +1,7 @@
+---
+name: AMRFinderPlus
+description: "Antimicrobial resistance, virulence & stress gene detection with conservative organism resolution"
+icon: fa://shield-virus
+category: Bioinformatics
+subcategory: Antimicrobial Resistance
+role: batch_connect

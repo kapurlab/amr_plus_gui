@@ -1,0 +1,110 @@
+# organism_map.yaml — Kraken2 species name  ->  AMRFinderPlus --organism token.
+#
+# AMRFinderPlus only accepts a fixed set of --organism tokens (DB-version
+# dependent; see config/amrfinder_organisms.txt and `amrfinder -l`). This map
+# translates the species name Kraken2 reports into the correct token. Passing
+# the WRONG token yields wrong point-mutation calls and wrong gene blacklisting,
+# so detection is deliberately conservative — an unmapped species resolves to
+# NO token (AMRFinderPlus runs without -O) rather than a guess.
+#
+# Three sections:
+#   species         exact "Genus species" -> token
+#   genus_fallback  genus -> token  (AMRFinderPlus genus-level tokens)
+#   complexes       species-complex membership for the "same complex" dominance
+#                   rule + collapsed token
+#
+# Edit by hand. Tokens MUST appear in config/amrfinder_organisms.txt (and the
+# live `amrfinder -l` list) or detection drops them as invalid.
+
+# ---------------------------------------------------------------------------
+# Exact species -> AMRFinderPlus --organism token
+# ---------------------------------------------------------------------------
+species:
+  "Acinetobacter baumannii": Acinetobacter_baumannii
+  "Bordetella pertussis": Bordetella_pertussis
+  "Burkholderia cepacia": Burkholderia_cepacia
+  "Burkholderia mallei": Burkholderia_mallei
+  "Burkholderia pseudomallei": Burkholderia_pseudomallei
+  "Citrobacter freundii": Citrobacter_freundii
+  "Clostridioides difficile": Clostridioides_difficile
+  "Corynebacterium diphtheriae": Corynebacterium_diphtheriae
+  "Enterobacter asburiae": Enterobacter_asburiae
+  "Enterobacter cloacae": Enterobacter_cloacae
+  "Enterococcus faecalis": Enterococcus_faecalis
+  "Enterococcus faecium": Enterococcus_faecium
+  # E. hirae has no token; collapse to the closest characterized congener.
+  "Enterococcus hirae": Enterococcus_faecium
+  "Escherichia coli": Escherichia
+  "Escherichia fergusonii": Escherichia
+  "Haemophilus influenzae": Haemophilus_influenzae
+  "Klebsiella oxytoca": Klebsiella_oxytoca
+  "Klebsiella pneumoniae": Klebsiella_pneumoniae
+  # K. pneumoniae complex members + K. aerogenes -> K. pneumoniae token.
+  "Klebsiella variicola": Klebsiella_pneumoniae
+  "Klebsiella quasipneumoniae": Klebsiella_pneumoniae
+  "Klebsiella aerogenes": Klebsiella_pneumoniae
+  "Enterobacter aerogenes": Klebsiella_pneumoniae
+  "Neisseria gonorrhoeae": Neisseria_gonorrhoeae
+  "Neisseria meningitidis": Neisseria_meningitidis
+  "Pseudomonas aeruginosa": Pseudomonas_aeruginosa
+  "Serratia marcescens": Serratia_marcescens
+  "Staphylococcus aureus": Staphylococcus_aureus
+  "Staphylococcus epidermidis": Staphylococcus_epidermidis
+  "Staphylococcus pseudintermedius": Staphylococcus_pseudintermedius
+  "Streptococcus agalactiae": Streptococcus_agalactiae
+  "Streptococcus pneumoniae": Streptococcus_pneumoniae
+  # S. mitis is frequently confused with / collapses to S. pneumoniae.
+  "Streptococcus mitis": Streptococcus_pneumoniae
+  "Streptococcus pyogenes": Streptococcus_pyogenes
+  "Vibrio cholerae": Vibrio_cholerae
+  "Vibrio parahaemolyticus": Vibrio_parahaemolyticus
+  "Vibrio vulnificus": Vibrio_vulnificus
+
+# ---------------------------------------------------------------------------
+# Genus-level fallbacks (used when the species is not in `species` above but
+# AMRFinderPlus offers a genus-level token).
+# ---------------------------------------------------------------------------
+genus_fallback:
+  Campylobacter: Campylobacter
+  Salmonella: Salmonella
+  Escherichia: Escherichia
+  Shigella: Escherichia          # Shigella is genomically E. coli
+
+# ---------------------------------------------------------------------------
+# Species complexes. If the top two Kraken2 species are both members of the
+# same complex, detection treats the call as "pure at the collapsed level"
+# (medium confidence) and uses `token`.
+# ---------------------------------------------------------------------------
+complexes:
+  acinetobacter_baumannii_calcoaceticus:
+    token: Acinetobacter_baumannii
+    members:
+      - "Acinetobacter baumannii"
+      - "Acinetobacter calcoaceticus"
+      - "Acinetobacter pittii"
+      - "Acinetobacter nosocomialis"
+      - "Acinetobacter seifertii"
+      - "Acinetobacter dijkshoorniae"
+  klebsiella_pneumoniae:
+    token: Klebsiella_pneumoniae
+    members:
+      - "Klebsiella pneumoniae"
+      - "Klebsiella variicola"
+      - "Klebsiella quasipneumoniae"
+      - "Klebsiella aerogenes"
+  mycobacterium_tuberculosis:
+    # No AMRFinderPlus token (MTBC AMR is handled by other tools); listed so
+    # the complex is recognized and detection does not mis-assign.
+    token: null
+    members:
+      - "Mycobacterium tuberculosis"
+      - "Mycobacterium bovis"
+      - "Mycobacterium africanum"
+      - "Mycobacterium caprae"
+  enterobacter_cloacae:
+    token: Enterobacter_cloacae
+    members:
+      - "Enterobacter cloacae"
+      - "Enterobacter asburiae"
+      - "Enterobacter hormaechei"
+      - "Enterobacter kobei"

@@ -1,0 +1,38 @@
+# amrfinder_organisms.txt — FALLBACK list of valid AMRFinderPlus --organism
+# tokens. The authoritative, DB-version-specific list comes from `amrfinder -l`;
+# this file is only consulted when that command is unavailable. Keep it in sync
+# with the installed DB. One token per line; blank lines and # comments ignored.
+#
+# Source: NCBI AMRFinderPlus (https://github.com/ncbi/amr/wiki/Running-AMRFinderPlus
+#         — "--organism option"). 31 values as of the 2024 DB releases.
+Acinetobacter_baumannii
+Bordetella_pertussis
+Burkholderia_cepacia
+Burkholderia_mallei
+Burkholderia_pseudomallei
+Campylobacter
+Citrobacter_freundii
+Clostridioides_difficile
+Corynebacterium_diphtheriae
+Enterobacter_asburiae
+Enterobacter_cloacae
+Enterococcus_faecalis
+Enterococcus_faecium
+Escherichia
+Haemophilus_influenzae
+Klebsiella_oxytoca
+Klebsiella_pneumoniae
+Neisseria_gonorrhoeae
+Neisseria_meningitidis
+Pseudomonas_aeruginosa
+Salmonella
+Serratia_marcescens
+Staphylococcus_aureus
+Staphylococcus_epidermidis
+Staphylococcus_pseudintermedius
+Streptococcus_agalactiae
+Streptococcus_pneumoniae
+Streptococcus_pyogenes
+Vibrio_cholerae
+Vibrio_parahaemolyticus
+Vibrio_vulnificus

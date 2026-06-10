@@ -1,0 +1,20 @@
+# Minimal environment for the AMRFinderPlus GUI (backend + core tools only).
+# The full env (assembler, mlst, kraken, seqkit) is in environment.yml.
+name: amr_plus
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - ncbi-amrfinderplus
+  - biopython
+  - pandas
+  - pyyaml
+  - fastapi>=0.115.0
+  - uvicorn-standard
+  - aiofiles
+  - jinja2
+  - pip:
+      - pydantic>=2.0.0

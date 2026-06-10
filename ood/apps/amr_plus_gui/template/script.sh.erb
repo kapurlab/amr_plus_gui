@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# AMRFinderPlus GUI OOD batch_connect script.
+# $port (uvicorn) is exported by before.sh.
+
+echo "=== AMRFinderPlus GUI Session Starting ==="
+echo "uvicorn:${port}"
+
+# Shared conda env installed at the tool root.
+# Falls back to a personal install if the shared env is absent.
+SHARED_ENV=/srv/kapurlab/tools/amr_plus_gui/env
+PERSONAL_ENV=/home/${USER}/miniforge3/envs/amr_plus
+PERSONAL_BASE_PYTHON=/home/${USER}/miniforge3/bin/python
+
+if [ -d "${SHARED_ENV}" ] && [ -x "${SHARED_ENV}/bin/python" ]; then
+  AMR_ENV="${SHARED_ENV}"
+  PYTHON="${SHARED_ENV}/bin/python"
+elif [ -d "${PERSONAL_ENV}" ]; then
+  AMR_ENV="${PERSONAL_ENV}"
+  PYTHON="${PERSONAL_ENV}/bin/python"
+else
+  AMR_ENV=""
+  PYTHON="${PERSONAL_BASE_PYTHON}"
+fi
+
+# Tool source (shared install only — no per-user fallback for the app itself)
+AMR_GUI=/srv/kapurlab/tools/amr_plus_gui
+
+# Add the conda env bin and the amr bin/ scripts to PATH
+export PATH="${AMR_ENV}/bin:${PATH}"
+# PYTHONPATH lets the amr bin/ scripts find each other (local imports in bin/)
+export PYTHONPATH="${AMR_GUI}/bin:${PYTHONPATH}"
+
+cd "${AMR_GUI}/backend"
+echo "Starting uvicorn on port ${port}"
+echo "  conda env: ${AMR_ENV}"
+echo "  amr_gui:   ${AMR_GUI}"
+exec $PYTHON -m uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port "${port}" \
+    --log-level info

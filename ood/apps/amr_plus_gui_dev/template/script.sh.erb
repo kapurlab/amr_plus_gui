@@ -30,6 +30,7 @@ else
 fi
 
 export PATH="${AMR_ENV}/bin:${PATH}"
+[ -n "${AMR_ENV}" ] && export CONDA_PREFIX="${AMR_ENV}"  # amrfinder DB resolution
 export PYTHONPATH="${AMR_DIR}/bin:${PYTHONPATH}"
 
 # Dev: build the frontend from the selected branch's source so UI changes are

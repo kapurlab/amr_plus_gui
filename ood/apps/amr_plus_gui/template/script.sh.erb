@@ -27,6 +27,11 @@ AMR_GUI=/srv/kapurlab/tools/amr_plus_gui
 
 # Add the conda env bin and the amr bin/ scripts to PATH
 export PATH="${AMR_ENV}/bin:${PATH}"
+# amrfinder is built for bioconda and resolves its DB under
+# $CONDA_PREFIX/share/amrfinderplus/data/latest. Export CONDA_PREFIX so it (and
+# the pipeline subprocess uvicorn spawns) find the DB without the
+# "no CONDA_PREFIX" warning/fallback. Harmless when AMR_ENV is empty.
+[ -n "${AMR_ENV}" ] && export CONDA_PREFIX="${AMR_ENV}"
 # PYTHONPATH lets the amr bin/ scripts find each other (local imports in bin/)
 export PYTHONPATH="${AMR_GUI}/bin:${PYTHONPATH}"
 

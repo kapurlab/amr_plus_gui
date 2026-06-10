@@ -109,6 +109,12 @@ PYTHON="${ENV_BIN}/python"
 # `#!/usr/bin/env perl` shebang must resolve to the env Perl (which carries
 # List::MoreUtils), not system Perl. The OOD session sets PATH the same way.
 if [[ -d "${ENV_BIN}" ]]; then export PATH="${ENV_BIN}:${PATH}"; fi
+# amrfinder is built for bioconda and resolves its DB under $CONDA_PREFIX/share/
+# amrfinderplus/data/latest. Without CONDA_PREFIX it warns and fails to find the
+# DB ("No valid AMRFinder database is found"), so `amrfinder -u` can't download
+# and runtime can't read it. Export it for the shared env (skip for --personal,
+# where the env name—not a fixed prefix—identifies it).
+if [[ ${USE_PERSONAL} -eq 0 ]]; then export CONDA_PREFIX="${SHARED_ENV}"; fi
 log "pip install backend requirements into ${ENV_DESC}"
 run "${PYTHON}" -m pip install -r "${REPO_DIR}/backend/requirements.txt"
 

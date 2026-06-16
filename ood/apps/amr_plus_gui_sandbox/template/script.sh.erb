@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# AMRFinderPlus (sandbox) OOD batch_connect — runs on the Slurm compute node.
+# $port is exported by before.sh. The install location + conda env come from
+# ~/.config/amr_plus_gui/sandbox.env, written by `bdtools install --sandbox amr_plus_gui`.
+
+echo "=== AMRFinderPlus (sandbox) starting ==="
+echo "host:$(hostname)  uvicorn:${port}"
+
+SANDBOX_ENV="${HOME}/.config/amr_plus_gui/sandbox.env"
+if [ -f "${SANDBOX_ENV}" ]; then
+  # shellcheck disable=SC1090
+  . "${SANDBOX_ENV}"
+  echo "Loaded ${SANDBOX_ENV}"
+fi
+
+# Defaults (overridden by sandbox.env): match `bdtools install --sandbox` layout.
+APP_DIR="${BDTOOLS_APP_DIR:-${HOME}/.local/share/bdtools/checkouts/amr_plus_gui}"
+APP_ENV="${BDTOOLS_APP_ENV:-${HOME}/miniforge3/envs/amr_plus}"
+
+PYTHON="${APP_ENV}/bin/python"
+if [ ! -x "${PYTHON}" ]; then
+  echo "ERROR: no python at ${PYTHON}" >&2
+  echo "       Run:  bdtools install --sandbox amr_plus_gui" >&2
+  exit 1
+fi
+if [ ! -d "${APP_DIR}/backend" ]; then
+  echo "ERROR: backend not found at ${APP_DIR}" >&2
+  echo "       Set BDTOOLS_APP_DIR in ${SANDBOX_ENV} (run: bdtools install --sandbox amr_plus_gui)." >&2
+  exit 1
+fi
+
+# Env bin on PATH (bioconda CLIs + Perl deps); CONDA_PREFIX for tools that need
+# their bundled DB (e.g. amrfinder); PYTHONPATH for the bin/ pipeline modules.
+export PATH="${APP_ENV}/bin:${PATH}"
+export CONDA_PREFIX="${APP_ENV}"
+export PYTHONPATH="${APP_DIR}/bin:${PYTHONPATH:-}"
+
+# Safety net: build the frontend if a clone hasn't been built yet.
+if [ ! -f "${APP_DIR}/frontend/dist/index.html" ]; then
+  echo "frontend/dist missing — building once (needs npm on PATH)…"
+  ( cd "${APP_DIR}/frontend" && npm ci && npm run build ) \
+    || echo "WARN: frontend build failed; the GUI may not load."
+fi
+
+cd "${APP_DIR}/backend"
+echo "Starting uvicorn on port ${port}"
+echo "  app dir: ${APP_DIR}"
+echo "  env:     ${APP_ENV}"
+exec "${PYTHON}" -m uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port "${port}" \
+    --log-level info

@@ -1,0 +1,44 @@
+---
+# ┌──────────────────────────────────────────────────────────────────────┐
+# │ EDIT ONE LINE PER SITE: set `cluster` to the name of THIS HPC's        │
+# │ cluster definition under /etc/ood/config/clusters.d/<name>.yml.        │
+# │ Ask your OOD admin (common values: "cluster", "roar", "hpc", …).       │
+# └──────────────────────────────────────────────────────────────────────┘
+cluster: "CHANGE_ME"
+
+form:
+  - slurm_partition
+  - slurm_account
+  - num_cores
+  - mem_gb
+  - bc_num_hours
+
+attributes:
+  slurm_partition:
+    widget: "text_field"
+    label: "Slurm partition"
+    value: ""
+    help: "The partition/queue to submit to (e.g. open, standard, batch). Ask your HPC admin if unsure."
+  slurm_account:
+    widget: "text_field"
+    label: "Slurm account (optional)"
+    value: ""
+    help: "Allocation/account to charge. Leave blank if your site does not require -A."
+  num_cores:
+    widget: "number_field"
+    label: "CPU cores"
+    value: 8
+    min: 1
+    max: 64
+  mem_gb:
+    widget: "number_field"
+    label: "Memory (GB)"
+    value: 32
+    min: 4
+    max: 512
+  bc_num_hours:
+    widget: "number_field"
+    label: "Session duration (hours)"
+    value: 8
+    min: 1
+    max: 48

@@ -107,6 +107,7 @@ export default function App() {
 
   const logRef = useRef(null);
   const eventSourceRef = useRef(null);
+  const watchIdRef = useRef(null);   // id of the job the poll loop is currently watching
 
   useEffect(() => {
     fetch("./api/config")
@@ -139,7 +140,7 @@ export default function App() {
             samp = { project: m[1], sample: m[2] };
             setActiveRun(samp);
           }
-          streamLogUntilDone(live.id, samp, () => {});
+          watchJob(live.id, samp, () => {});
         }
       })
       .catch(() => {});
@@ -306,7 +307,7 @@ export default function App() {
       setJobId(data.job_id);
       setJobStatus("running");
       setLogLines([]);
-      streamLogUntilDone(data.job_id, null, () => {
+      watchJob(data.job_id, null, () => {
         setStat(name, "Download finished — see samples below.");
         refreshAfterLoad(name);
       });
@@ -419,7 +420,7 @@ export default function App() {
         .then((r) => (r.ok ? r.json() : r.json().then((e) => { throw new Error(e.detail || "Run failed"); })))
         .then(({ job_id }) => {
           setJobId(job_id);
-          streamLogUntilDone(job_id, samp, resolve);
+          watchJob(job_id, samp, resolve);
         })
         .catch((err) => {
           setLogLines((prev) => [...prev, `ERROR: ${err.message}`]);
@@ -430,43 +431,56 @@ export default function App() {
     });
   }
 
-  function streamLogUntilDone(id, samp, done) {
-    const es = new EventSource(`./api/jobs/${id}/log`);
-    eventSourceRef.current = es;
-    es.onmessage = (evt) => {
-      const data = evt.data;
-      if (data === "[DONE]") {
-        es.close();
-        setRunning(false);
-        fetch(`./api/jobs/${id}`)
-          .then((r) => r.json())
-          .then((job) => {
-            setJobStatus(job.status);
-            setCurrentStep("");
-            if (samp) {
-              loadSampleResults(samp.project, samp);
-              loadAmrTable(samp.project, samp);
-            }
-            loadProjects();
-          })
-          .catch(() => {})
-          .finally(() => done());
-      } else {
-        setLogLines((prev) => [...prev, data]);
-        if (/Step \d+:/i.test(data) ||
-            /Resolving organism/i.test(data) ||
-            /AMRFinderPlus/i.test(data) ||
-            /Pipeline completed/i.test(data)) {
-          setCurrentStep(data.trim().replace(/^#+\s*/, ""));
-        }
-      }
-    };
-    es.onerror = () => {
-      es.close();
+  // Watch a job by POLLING a plain endpoint (no SSE/EventSource). The OOD /rnode
+  // Apache proxy holds SSE connections open and corrupts concurrent sibling
+  // requests (a status poll comes back with the SSE's buffered body, breaking
+  // JSON parsing → runs were mislabelled "Failed" and results never refreshed).
+  // /api/jobs/{id}/logtext is a normal GET returning BOTH the recorded status
+  // (from the real exit code) and the current log text — proxy-safe.
+  function watchJob(id, samp, done) {
+    watchIdRef.current = id;   // newest run wins; stale loops below bail out
+    let errors = 0;
+    let finished = false;
+    const finish = (status) => {
+      if (finished || watchIdRef.current !== id) { done(); return; }
+      finished = true;
       setRunning(false);
-      setJobStatus("failed");
+      setJobStatus(status);
+      setCurrentStep("");
+      if (samp) {
+        loadSampleResults(samp.project, samp);
+        loadAmrTable(samp.project, samp);
+      }
+      loadProjects();
       done();
     };
+    const tick = () => {
+      if (finished || watchIdRef.current !== id) return;
+      fetch(`./api/jobs/${id}/logtext`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("http " + r.status))))
+        .then((data) => {
+          errors = 0;
+          if (typeof data.log === "string") {
+            const lines = data.log.split("\n");
+            setLogLines(lines);
+            for (let i = lines.length - 1; i >= 0; i--) {
+              const d = lines[i];
+              if (/Step \d+:/i.test(d) || /Resolving organism/i.test(d) ||
+                  /AMRFinderPlus/i.test(d) || /Pipeline completed/i.test(d)) {
+                setCurrentStep(d.trim().replace(/^#+\s*/, "")); break;
+              }
+            }
+          }
+          if (!data.status || data.status === "running") { setTimeout(tick, 2000); return; }
+          finish(data.status);                  // succeeded | failed from the real exit code
+        })
+        .catch(() => {
+          errors += 1;
+          if (errors < 30) setTimeout(tick, 2000);   // keep waiting through transient blips
+          else finish("failed");
+        });
+    };
+    setTimeout(tick, 1200);
   }
 
   function browseDirs(path) {
@@ -791,7 +805,7 @@ export default function App() {
                                   <button className="ghost action" onClick={() => { loadSampleResults(proj.name, s); loadAmrTable(proj.name, s); }}>
                                     ↻ Refresh
                                   </button>
-                                  <button className="ghost action" onClick={() => { setSelectedResultKey(key); setShowResults(true); }}>
+                                  <button className="ghost action" onClick={() => { setSelectedResultKey(key); loadSampleResults(proj.name, s); loadAmrTable(proj.name, s); setShowResults(true); }}>
                                     View results table ↓
                                   </button>
                                 </div>

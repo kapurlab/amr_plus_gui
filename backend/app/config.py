@@ -39,8 +39,12 @@ _KRAKEN_DB_DEFAULT = _first_existing(
 # AMRFinderPlus database directory. Empty by default — `amrfinder` finds its
 # own DB via $CONDA_PREFIX/share/amrfinderplus/data/latest when this is unset;
 # set it explicitly only to pin a specific DB version.
-_AMRFINDER_DB_DEFAULT = _first_existing(
-    "/srv/kapurlab/databases/amrfinderplus/latest",
+# Honor the "empty by default" intent: only pin a DB if a known path actually
+# exists; otherwise leave it empty so amrfinder uses its bundled DB. (Plain
+# _first_existing falls back to its FIRST arg, which would wrongly pin a missing
+# /srv/kapurlab path on other sites — e.g. ICAR — and pass a bad --amrfinder-db.)
+_AMRFINDER_DB_DEFAULT = next(
+    (p for p in ("/srv/kapurlab/databases/amrfinderplus/latest",) if p and Path(p).exists()),
     "",
 )
 

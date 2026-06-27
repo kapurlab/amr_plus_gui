@@ -475,9 +475,26 @@ export default function App() {
           finish(data.status);                  // succeeded | failed from the real exit code
         })
         .catch(() => {
+          // A failed logtext poll is almost always a transient OOD /rnode proxy
+          // hiccup, NOT a finished job — never mark the run failed or (in a batch)
+          // advance the queue on this alone. After a few quick retries, confirm
+          // the real state via the lightweight status endpoint; only that, or a
+          // prolonged total outage, may terminate the watch.
           errors += 1;
-          if (errors < 30) setTimeout(tick, 2000);   // keep waiting through transient blips
-          else finish("failed");
+          if (errors < 8) { setTimeout(tick, 2000); return; }   // ride out short blips
+          fetch(`./api/jobs/${id}`)
+            .then((r) => (r.ok ? r.json() : Promise.reject(new Error("http " + r.status))))
+            .then((job) => {
+              errors = 0;
+              if (!job.status || job.status === "running") { setTimeout(tick, 2000); return; }
+              finish(job.status);                 // real terminal status from the exit code
+            })
+            .catch(() => {
+              // status endpoint also unreachable — keep waiting rather than
+              // falsely failing; give up only after a long sustained outage.
+              if (errors < 60) { setTimeout(tick, 2000); return; }
+              finish("failed");
+            });
         });
     };
     setTimeout(tick, 1200);

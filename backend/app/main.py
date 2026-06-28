@@ -980,6 +980,21 @@ def api_run(payload: RunPayload):
 
     run_dir = project_dir / "amr" / sample_name
 
+    # A space ANYWHERE in the run path (e.g. a projects-root named "ESBL EC-sheep")
+    # silently breaks the third-party tools: shovill, AMRFinderPlus/StxTyper and the
+    # CGE finders build internal shell/BLAST commands that don't quote paths, so the
+    # path splits at the space and every step fails with a useless error. Project
+    # NAMES are already space-sanitised at creation; this guards the projects-root /
+    # input paths the user controls directly. Fail fast with an actionable message.
+    for label, p in (("input file", str(primary)), ("project path", str(run_dir))):
+        if " " in p:
+            raise HTTPException(
+                400,
+                f"The {label} contains a space ({p!r}), which breaks the assembly "
+                "and gene-finder tools (AMRFinderPlus, PlasmidFinder, etc.). Rename "
+                "the project folder / projects root to remove spaces (use _ or -).",
+            )
+
     # Refuse to start a second pipeline in the same output directory (race).
     for existing in job_manager.list_jobs():
         if existing.get("status") == "running" and existing.get("cwd") == str(run_dir):

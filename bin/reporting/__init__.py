@@ -222,6 +222,28 @@ def build_stats_items(
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+def load_plasmidfinder_tsv(path: Path) -> List[Dict[str, str]]:
+    """Parse PlasmidFinder's results_tab.tsv (copied to plasmidfinder.tsv) into
+    replicon rows for the report. Returns [] when the file is absent (the step
+    didn't run) — the report distinguishes that from 'ran, none found' via
+    plasmidfinder.json's presence, checked by the caller."""
+    rows: List[Dict[str, str]] = []
+    if not Path(path).is_file():
+        return rows
+    import csv as _csv
+    with open(path, encoding="utf-8") as fh:
+        for r in _csv.DictReader(fh, delimiter="\t"):
+            contig = (r.get("Contig") or "").split()[0] if r.get("Contig") else ""
+            rows.append({
+                "replicon": (r.get("Plasmid") or "").strip(),
+                "identity": (r.get("Identity") or "").strip(),
+                "contig": contig,
+                "accession": (r.get("Accession number") or "").strip(),
+                "database": (r.get("Database") or "").strip(),
+            })
+    return rows
+
+
 def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
     """Build stats.xlsx + report.pdf for a finished run dir. Returns the paths
     (or None for any artifact that couldn't be produced). Never raises."""
@@ -234,6 +256,9 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
     manifest = _load_json(outdir / "run_manifest.json")
     amr_rows = load_amrfinder_tsv(outdir / "amrfinder.tsv")
     amr_summary = summarize_amr(amr_rows)
+    # PlasmidFinder: ran iff plasmidfinder.json exists; rows from the TSV.
+    plasmid_ran = (outdir / "plasmidfinder.json").is_file()
+    plasmids = load_plasmidfinder_tsv(outdir / "plasmidfinder.tsv")
 
     date_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     items = build_stats_items(sample, date_stamp, fastq_qc, qc, detection, manifest, amr_summary)
@@ -262,6 +287,8 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
             "amr_rows": amr_rows,
             "amr_summary": amr_summary,
             "stats_items": items,
+            "plasmid_ran": plasmid_ran,
+            "plasmids": plasmids,
         }
         write_pdf(ctx, pdf_path, outdir)
         result["report_pdf"] = str(pdf_path)

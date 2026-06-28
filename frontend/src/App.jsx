@@ -84,6 +84,7 @@ export default function App() {
   const [usePlus, setUsePlus] = useState(true);
   const [runKraken, setRunKraken] = useState(true);
   const [runMlst, setRunMlst] = useState(true);
+  const [runPlasmidfinder, setRunPlasmidfinder] = useState(true);
   const [threads, setThreads] = useState("");
   const [krakenDb, setKrakenDb] = useState("");
   const [amrfinderDb, setAmrfinderDb] = useState("");
@@ -411,6 +412,7 @@ export default function App() {
           use_plus: usePlus,
           run_kraken: runKraken,
           run_mlst: runMlst,
+          run_plasmidfinder: runPlasmidfinder,
           threads: threads ? parseInt(threads, 10) : null,
           kraken_db: krakenDb.trim() || null,
           amrfinder_db: amrfinderDb.trim() || null,
@@ -1050,6 +1052,10 @@ export default function App() {
                 <label className="checkbox-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
                   <input type="checkbox" checked={runMlst} onChange={(e) => setRunMlst(e.target.checked)} disabled={running} />
                   <span>Run MLST corroboration (if available)</span>
+                </label>
+                <label className="checkbox-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
+                  <input type="checkbox" checked={runPlasmidfinder} onChange={(e) => setRunPlasmidfinder(e.target.checked)} disabled={running} />
+                  <span>Run PlasmidFinder replicon typing (if available)</span>
                 </label>
               </div>
 

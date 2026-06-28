@@ -281,6 +281,30 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         story.append(_banner("No acquired AMR genes or known resistance point mutations detected "
                              "above reporting thresholds.", TEAL, ss))
 
+    # --- Plasmid replicons (PlasmidFinder) — only when the step ran. An empty
+    # result is shown explicitly ("none detected") rather than omitted, because
+    # a confirmed absence is itself a surveillance result. ---
+    if ctx.get("plasmid_ran"):
+        story.append(Paragraph("Plasmid replicons", ss["H2"]))
+        plasmids = ctx.get("plasmids") or []
+        if plasmids:
+            story.append(Paragraph(
+                "Plasmid replicon types identified by PlasmidFinder (BLAST vs. the CGE replicon "
+                "database) on the assembly. %Id is identity to the closest reference; replicons "
+                "co-located with AMR contigs suggest plasmid-borne resistance.", ss["Body"]))
+            hdr = ["Replicon", "Database", "%Id", "Contig", "Accession"]
+            data = [hdr]
+            for p in plasmids[:40]:
+                data.append([
+                    p.get("replicon", ""), p.get("database", ""), p.get("identity", ""),
+                    p.get("contig", ""), p.get("accession", ""),
+                ])
+            story.append(_grid(data, ss, [1.6, 1.4, 0.6, 1.3, 1.1], small=True))
+            if len(plasmids) > 40:
+                story.append(Paragraph(f"… {len(plasmids) - 40} more in plasmidfinder.tsv.", ss["Small"]))
+        else:
+            story.append(_banner("No plasmid replicons detected above thresholds.", TEAL, ss))
+
     # --- Methods & provenance ---
     story.append(Paragraph("Methods &amp; provenance", ss["H2"]))
     iso = ", ".join(r.get("standard", "") for r in (man.get("iso_references") or []) if r.get("standard"))
@@ -292,6 +316,7 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         ("Thresholds", f"ident_min={opts.get('ident_min','—')} (−1 = curated per-gene), "
                        f"coverage_min={opts.get('coverage_min','—')}"),
         ("--plus", "yes" if opts.get("plus") else "no"),
+        ("PlasmidFinder", "CGE replicon DB (BLAST)" if ctx.get("plasmid_ran") else "not run"),
         ("Standards referenced", iso or "—"),
     ], ss))
     story.append(Spacer(1, 6))

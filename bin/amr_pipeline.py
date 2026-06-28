@@ -311,6 +311,53 @@ def run_mlst(assembly: Path, outdir: Path, sample: str) -> Optional[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Step — PlasmidFinder (CGE) — runs on the assembly we already produced.
+# ---------------------------------------------------------------------------
+def run_plasmidfinder(
+    assembly: Path,
+    outdir: Path,
+    cge_env: Optional[str],
+    cge_db_root: Optional[str],
+) -> Optional[Path]:
+    """Run CGE PlasmidFinder on the assembly -> plasmidfinder.json/.tsv in outdir.
+
+    PlasmidFinder lives in a SEPARATE conda env (its recipe pins python in ways
+    that conflict with the main env), so we invoke that env's interpreter +
+    script explicitly rather than relying on PATH/shebang. Soft-skips (returns
+    None) whenever the env or DB isn't configured/present — never blocks a run.
+    """
+    if not cge_env or not cge_db_root:
+        log("NOTE: CGE env / DB not configured — skipping PlasmidFinder.")
+        return None
+    env_dir = Path(cge_env)
+    py = env_dir / "bin" / "python"
+    script = env_dir / "bin" / "plasmidfinder.py"
+    blastn = env_dir / "bin" / "blastn"
+    db = Path(cge_db_root) / "plasmidfinder_db"
+    if not (py.is_file() and script.is_file() and db.is_dir()):
+        log(f"NOTE: PlasmidFinder unavailable (env={env_dir}, db={db}) — skipping.")
+        return None
+    work = outdir / "_plasmidfinder"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    # Explicit env python bypasses the tool's `#!/usr/bin/env python3` shebang,
+    # which would otherwise resolve to the wrong interpreter under the job's PATH.
+    cmd = [py, script, "-i", assembly, "-o", work, "-p", db,
+           "-mp", blastn, "-x", "-t", "0.90", "-l", "0.60"]
+    rc = _run(cmd)
+    src_json = work / "data.json"
+    src_tsv = work / "results_tab.tsv"
+    if rc == 0 and src_json.is_file():
+        shutil.copyfile(src_json, outdir / "plasmidfinder.json")
+        if src_tsv.is_file():
+            shutil.copyfile(src_tsv, outdir / "plasmidfinder.tsv")
+        return outdir / "plasmidfinder.json"
+    log(f"WARNING: PlasmidFinder failed (rc={rc}); continuing without replicon typing.")
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def main(argv=None) -> int:
@@ -329,6 +376,9 @@ def main(argv=None) -> int:
     ap.add_argument("--plus", action="store_true", default=False)
     ap.add_argument("--no-kraken", action="store_true", default=False)
     ap.add_argument("--no-mlst", action="store_true", default=False)
+    ap.add_argument("--no-plasmidfinder", action="store_true", default=False)
+    ap.add_argument("--cge-env", default=os.environ.get("CGE_ENV", ""))
+    ap.add_argument("--cge-db-root", default=os.environ.get("CGE_DB_ROOT", ""))
     ap.add_argument("--kraken-db", default=os.environ.get("KRAKEN_DB", ""))
     ap.add_argument("--amrfinder-db", default=None)
     ap.add_argument("--threads", type=int, default=max(1, (os.cpu_count() or 4) // 2))
@@ -442,6 +492,13 @@ def main(argv=None) -> int:
     rc = manifest.get("return_code", 1)
     if manifest.get("stxtyper_active"):
         log("StxTyper ran (Escherichia + --plus): Stx subtypes are in the AMRFinderPlus output.")
+
+    # ---- Step 5b: PlasmidFinder (CGE) — replicon typing on the assembly ----
+    if not args.no_plasmidfinder:
+        step("Step 5b: Plasmid replicon typing (PlasmidFinder)")
+        pf = run_plasmidfinder(assembly, outdir, args.cge_env, args.cge_db_root)
+        if pf:
+            log(f"  PlasmidFinder results written: {pf.name}")
 
     # ---- Step 6: Report (stats workbook + PDF) ----
     step("Step 6: Building report (stats.xlsx + report.pdf)")

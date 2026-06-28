@@ -44,11 +44,24 @@ _AMRFINDER_DB_DEFAULT = _first_existing(
     "",
 )
 
+# CGE finders (PlasmidFinder etc.) live in a separate conda env with their DBs
+# under a sibling databases dir. Empty by default — the pipeline soft-skips the
+# CGE steps when these aren't set, so the GUI still works where CGE isn't
+# installed. Set both at a site to enable plasmid/serotype/virulence typing.
+_CGE_ENV_DEFAULT = next(
+    (p for p in ("/srv/kapurlab/tools/cge/env",) if Path(p).is_dir()), ""
+)
+_CGE_DB_ROOT_DEFAULT = next(
+    (p for p in ("/srv/kapurlab/databases/cge",) if Path(p).is_dir()), ""
+)
+
 DEFAULTS: Dict[str, Any] = {
     "projects_root": str(Path.home() / "projects"),
     "shared_projects_root": _DEFAULT_SHARED_PROJECTS_ROOT,
     "kraken_db": _KRAKEN_DB_DEFAULT,
     "amrfinder_db": _AMRFINDER_DB_DEFAULT,
+    "cge_env": _CGE_ENV_DEFAULT,
+    "cge_db_root": _CGE_DB_ROOT_DEFAULT,
 }
 
 

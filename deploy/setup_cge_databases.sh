@@ -42,7 +42,14 @@ for entry in "${DBS[@]}"; do
   fi
   echo ">> indexing ${name}"
   ( cd "$dest" && "$PY" INSTALL.py "$KMA_INDEX" >/dev/null )
-  commit="$(git -C "$dest" rev-parse HEAD)"
+  # The DBs are root-owned but read by per-user OOD sessions, and VirulenceFinder
+  # reads the DB's git commit for provenance — mark it safe for the CGE env's git
+  # across users (else git's dubious-ownership guard aborts the step). Idempotent.
+  ENV_GIT="${CGE_ENV}/bin/git"
+  [ -x "$ENV_GIT" ] || ENV_GIT="git"
+  "$ENV_GIT" config --system --get-all safe.directory 2>/dev/null | grep -qxF "$dest" \
+    || "$ENV_GIT" config --system --add safe.directory "$dest"
+  commit="$("$ENV_GIT" -C "$dest" rev-parse HEAD)"
   echo "${name} ${commit}" | tee -a "$COMMITS"
 done
 

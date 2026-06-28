@@ -48,11 +48,17 @@ _AMRFINDER_DB_DEFAULT = _first_existing(
 # under a sibling databases dir. Empty by default — the pipeline soft-skips the
 # CGE steps when these aren't set, so the GUI still works where CGE isn't
 # installed. Set both at a site to enable plasmid/serotype/virulence typing.
+# Probe known site roots so EVERY user gets the CGE paths by default — not just
+# whoever's config was hand-set. "" if none exists (soft-skips the finders).
+# TODO(site-parameterize): like the other hard-coded /srv/<site> defaults here,
+# this should derive from a site-root env var rather than an enumerated list.
 _CGE_ENV_DEFAULT = next(
-    (p for p in ("/srv/kapurlab/tools/cge/env",) if Path(p).is_dir()), ""
+    (p for p in ("/srv/kapurlab/tools/cge/env", "/srv/icar/tools/cge/env")
+     if Path(p).is_dir()), ""
 )
 _CGE_DB_ROOT_DEFAULT = next(
-    (p for p in ("/srv/kapurlab/databases/cge",) if Path(p).is_dir()), ""
+    (p for p in ("/srv/kapurlab/databases/cge", "/srv/icar/databases/cge")
+     if Path(p).is_dir()), ""
 )
 
 DEFAULTS: Dict[str, Any] = {

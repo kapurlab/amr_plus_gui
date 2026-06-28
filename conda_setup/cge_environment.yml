@@ -1,0 +1,23 @@
+# CGE finders environment for the AMRFinderPlus GUI (Phase 1: PlasmidFinder,
+# SerotypeFinder, VirulenceFinder). Kept SEPARATE from the main amr_plus_gui env
+# on purpose: the CGE BLAST/KMA finders coexist cleanly with each other but their
+# recipes pin python (plasmidfinder wants >=3.14) in ways that poison a shared
+# env, so we isolate them and pin python=3.11 for a reproducible, stable solve.
+#
+# Build:   mamba env create -p <SITE>/tools/cge/env -f cge_environment.yml
+# MGE (MobileElementFinder) is NOT here — its biopython<=1.80 pin is
+# irreconcilable with this stack; it runs via its own env / Docker (Phase 2).
+name: cge
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - plasmidfinder
+  - serotypefinder
+  - virulencefinder
+  - kma
+  - blast >=2.12
+  - cgecore
+  - tabulate
+  - python-dateutil

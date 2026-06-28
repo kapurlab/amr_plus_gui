@@ -61,6 +61,23 @@ def _have(tool: str) -> bool:
     return shutil.which(tool) is not None
 
 
+def _total_ram_gb() -> int:
+    try:
+        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 ** 3))
+    except (ValueError, OSError, AttributeError):
+        return 16
+
+
+def _shovill_ram_gb() -> int:
+    """RAM ceiling to hand shovill's internal SPAdes via --ram. shovill defaults
+    this to 16 GB, and SPAdes enforces it as an address-space limit (RLIMIT_AS) —
+    too low for high-depth isolates, where mimalloc's virtual reservations blow
+    past 16 GB and SPAdes aborts ("zero contigs"), silently demoting us to the
+    slower fallback. It's a CEILING, not actual usage (real rss stays ~10-15 GB),
+    so a generous value is safe; cap at 128 and leave headroom on small boxes."""
+    return max(16, min(_total_ram_gb() - 8, 128))
+
+
 def _run(cmd: List[str], cwd: Optional[Path] = None, env: Optional[dict] = None) -> int:
     log(f"$ {' '.join(str(c) for c in cmd)}")
     try:
@@ -107,7 +124,8 @@ def assemble(r1: Path, r2: Optional[Path], outdir: Path, threads: int) -> Option
     if _have("shovill"):
         if work.exists():
             shutil.rmtree(work, ignore_errors=True)
-        cmd = ["shovill", "--outdir", str(work), "--R1", str(r1), "--cpus", str(threads), "--force"]
+        cmd = ["shovill", "--outdir", str(work), "--R1", str(r1), "--cpus", str(threads),
+               "--ram", str(_shovill_ram_gb()), "--force"]
         if r2:
             cmd += ["--R2", str(r2)]
         else:
@@ -311,6 +329,226 @@ def run_mlst(assembly: Path, outdir: Path, sample: str) -> Optional[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Step — PlasmidFinder (CGE) — runs on the assembly we already produced.
+# ---------------------------------------------------------------------------
+def run_plasmidfinder(
+    assembly: Path,
+    outdir: Path,
+    cge_env: Optional[str],
+    cge_db_root: Optional[str],
+) -> Optional[Path]:
+    """Run CGE PlasmidFinder on the assembly -> plasmidfinder.json/.tsv in outdir.
+
+    PlasmidFinder lives in a SEPARATE conda env (its recipe pins python in ways
+    that conflict with the main env), so we invoke that env's interpreter +
+    script explicitly rather than relying on PATH/shebang. Soft-skips (returns
+    None) whenever the env or DB isn't configured/present — never blocks a run.
+    """
+    if not cge_env or not cge_db_root:
+        log("NOTE: CGE env / DB not configured — skipping PlasmidFinder.")
+        return None
+    env_dir = Path(cge_env)
+    py = env_dir / "bin" / "python"
+    script = env_dir / "bin" / "plasmidfinder.py"
+    blastn = env_dir / "bin" / "blastn"
+    db = Path(cge_db_root) / "plasmidfinder_db"
+    if not (py.is_file() and script.is_file() and db.is_dir()):
+        log(f"NOTE: PlasmidFinder unavailable (env={env_dir}, db={db}) — skipping.")
+        return None
+    work = outdir / "_plasmidfinder"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    # Explicit env python bypasses the tool's `#!/usr/bin/env python3` shebang,
+    # which would otherwise resolve to the wrong interpreter under the job's PATH.
+    cmd = [py, script, "-i", assembly, "-o", work, "-p", db,
+           "-mp", blastn, "-x", "-t", "0.90", "-l", "0.60"]
+    rc = _run(cmd, env=_cge_env(env_dir))
+    src_json = work / "data.json"
+    src_tsv = work / "results_tab.tsv"
+    if rc == 0 and src_json.is_file():
+        shutil.copyfile(src_json, outdir / "plasmidfinder.json")
+        if src_tsv.is_file():
+            shutil.copyfile(src_tsv, outdir / "plasmidfinder.tsv")
+        return outdir / "plasmidfinder.json"
+    log(f"WARNING: PlasmidFinder failed (rc={rc}); continuing without replicon typing.")
+    return None
+
+
+def _cge_paths(cge_env: Optional[str], cge_db_root: Optional[str]):
+    """Resolve (env_dir, python, blastn, kma, db_root) or None if unconfigured."""
+    if not cge_env or not cge_db_root:
+        return None
+    env_dir = Path(cge_env)
+    py = env_dir / "bin" / "python"
+    if not py.is_file():
+        return None
+    return env_dir, py, env_dir / "bin" / "blastn", env_dir / "bin" / "kma", Path(cge_db_root)
+
+
+def _cge_env(env_dir: Path) -> dict:
+    """Subprocess env with the CGE env's bin FIRST on PATH, so any internal tool
+    a finder shells out to (notably `git`, used by VirulenceFinder to read the DB
+    commit) resolves to the CGE env — where the DB safe.directory is configured —
+    rather than whichever git the OOD session's PATH happens to surface."""
+    env = dict(os.environ)
+    env["PATH"] = f"{env_dir / 'bin'}:" + env.get("PATH", "")
+    return env
+
+
+def _conda_pkg_version(env_dir: Path, pkg: str) -> str:
+    """Read a conda package's version from the env's conda-meta (the CGE tools are
+    conda-installed, so `pip show` misses them)."""
+    import glob
+    for f in glob.glob(str(env_dir / "conda-meta" / f"{pkg}-*.json")):
+        rest = Path(f).name[len(pkg) + 1:-5]  # strip "<pkg>-" prefix and ".json"
+        return rest.split("-")[0]
+    return ""
+
+
+def _cge_db_commit(env_dir: Path, db_dir: Path) -> str:
+    try:
+        r = subprocess.run(
+            [str(env_dir / "bin" / "git"), "-C", str(db_dir), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, env=_cge_env(env_dir), timeout=30,
+        )
+        return (r.stdout or "").strip()
+    except (subprocess.SubprocessError, OSError):
+        return ""
+
+
+def write_cge_versions(outdir: Path, cge_env: Optional[str], cge_db_root: Optional[str]) -> None:
+    """Record {tool: {version, db}} for each CGE finder that produced output, so
+    the report can cite tool + DB release numbers (provenance/reproducibility)."""
+    paths = _cge_paths(cge_env, cge_db_root)
+    if not paths:
+        return
+    env_dir, _py, _b, _k, db_root = paths
+    # tool pkg, DB dir, the artifact whose presence means "this finder ran"
+    spec = {
+        "plasmidfinder": ("plasmidfinder", "plasmidfinder_db", outdir / "plasmidfinder.json"),
+        "serotypefinder": ("serotypefinder", "serotypefinder_db", outdir / "serotype.json"),
+        "virulencefinder": ("virulencefinder", "virulencefinder_db", outdir / "virulencefinder.tsv"),
+    }
+    versions: Dict[str, Dict[str, str]] = {}
+    for key, (pkg, dbname, marker) in spec.items():
+        if not marker.is_file():
+            continue
+        versions[key] = {
+            "version": _conda_pkg_version(env_dir, pkg),
+            "db": _cge_db_commit(env_dir, db_root / dbname),
+        }
+    if versions:
+        (outdir / "cge_versions.json").write_text(
+            json.dumps(versions, indent=2) + "\n", encoding="utf-8")
+
+
+def _virulence_db_sets(species: Optional[str]) -> str:
+    """Map the detected species to the matching VirulenceFinder DB set(s).
+
+    Returns "" when no curated set applies (the step then soft-skips) — running
+    the wrong species' virulence DB just produces noise."""
+    s = (species or "").lower().replace("_", " ")
+    if "escherichia" in s:
+        return "virulence_ecoli,stx"
+    if "staphylococcus aureus" in s:
+        return "s.aureus_toxin,s.aureus_exoenzyme,s.aureus_hostimm"
+    if "enterococcus" in s:
+        return "virulence_ent,virulence_entfm_entls"
+    if "listeria" in s:
+        return "listeria"
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Step — SerotypeFinder (CGE) — E. coli only; a single O:H call, not a table.
+# ---------------------------------------------------------------------------
+def run_serotypefinder(
+    assembly: Path, outdir: Path, cge_env: Optional[str], cge_db_root: Optional[str],
+    species: Optional[str],
+) -> Optional[Path]:
+    if "escherichia" not in (species or "").lower():
+        log(f"NOTE: SerotypeFinder applies to E. coli; species is {species or 'unknown'} — skipping.")
+        return None
+    paths = _cge_paths(cge_env, cge_db_root)
+    if not paths:
+        log("NOTE: CGE env / DB not configured — skipping SerotypeFinder.")
+        return None
+    env_dir, py, blastn, _kma, db_root = paths
+    script = env_dir / "bin" / "serotypefinder"
+    db = db_root / "serotypefinder_db"
+    if not (script.is_file() and db.is_dir()):
+        log(f"NOTE: SerotypeFinder unavailable (env={env_dir}, db={db}) — skipping.")
+        return None
+    work = outdir / "_serotypefinder"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    cmd = [py, script, "-i", assembly, "-o", work, "-p", db,
+           "-mp", blastn, "-x", "-t", "0.85", "-l", "0.60"]
+    rc = _run(cmd, env=_cge_env(env_dir))
+    tab = work / "results_tab.tsv"
+    if rc != 0 or not tab.is_file():
+        log(f"WARNING: SerotypeFinder failed (rc={rc}).")
+        return None
+    o_type = h_type = ""
+    for line in tab.read_text(encoding="utf-8").splitlines():
+        cols = line.split("\t")
+        if len(cols) >= 3 and cols[0] == "O_type" and not o_type:
+            o_type = cols[2].strip()
+        elif len(cols) >= 3 and cols[0] == "H_type" and not h_type:
+            h_type = cols[2].strip()
+    serotype = f"{o_type or 'O?'}:{h_type or 'H?'}"
+    out = outdir / "serotype.json"
+    out.write_text(json.dumps(
+        {"o_type": o_type, "h_type": h_type, "serotype": serotype}, indent=2) + "\n",
+        encoding="utf-8")
+    if tab.is_file():
+        shutil.copyfile(tab, outdir / "serotypefinder.tsv")
+    log(f"  Serotype: {serotype}")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Step — VirulenceFinder (CGE) — species-gated DB set; a gene table.
+# ---------------------------------------------------------------------------
+def run_virulencefinder(
+    assembly: Path, outdir: Path, cge_env: Optional[str], cge_db_root: Optional[str],
+    species: Optional[str],
+) -> Optional[Path]:
+    db_sets = _virulence_db_sets(species)
+    if not db_sets:
+        log(f"NOTE: no VirulenceFinder DB set for species {species or 'unknown'} — skipping.")
+        return None
+    paths = _cge_paths(cge_env, cge_db_root)
+    if not paths:
+        log("NOTE: CGE env / DB not configured — skipping VirulenceFinder.")
+        return None
+    env_dir, py, blastn, kma, db_root = paths
+    db = db_root / "virulencefinder_db"
+    if not db.is_dir():
+        log(f"NOTE: VirulenceFinder DB unavailable ({db}) — skipping.")
+        return None
+    work = outdir / "_virulencefinder"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    # Run via `python -m virulencefinder` (no console-script shebang to fight).
+    cmd = [py, "-m", "virulencefinder", "-ifa", assembly, "-o", work, "-p", db,
+           "-d", db_sets, "-b", blastn, "-k", kma, "-x", "-t", "0.90", "-l", "0.60"]
+    rc = _run(cmd, env=_cge_env(env_dir))
+    tab = work / "results_tab.tsv"
+    src_json = work / "data.json"
+    if rc == 0 and tab.is_file():
+        shutil.copyfile(tab, outdir / "virulencefinder.tsv")
+        if src_json.is_file():
+            shutil.copyfile(src_json, outdir / "virulencefinder.json")
+        return outdir / "virulencefinder.tsv"
+    log(f"WARNING: VirulenceFinder failed (rc={rc}); continuing without virulence typing.")
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 def main(argv=None) -> int:
@@ -329,6 +567,11 @@ def main(argv=None) -> int:
     ap.add_argument("--plus", action="store_true", default=False)
     ap.add_argument("--no-kraken", action="store_true", default=False)
     ap.add_argument("--no-mlst", action="store_true", default=False)
+    ap.add_argument("--no-plasmidfinder", action="store_true", default=False)
+    ap.add_argument("--no-serotypefinder", action="store_true", default=False)
+    ap.add_argument("--no-virulencefinder", action="store_true", default=False)
+    ap.add_argument("--cge-env", default=os.environ.get("CGE_ENV", ""))
+    ap.add_argument("--cge-db-root", default=os.environ.get("CGE_DB_ROOT", ""))
     ap.add_argument("--kraken-db", default=os.environ.get("KRAKEN_DB", ""))
     ap.add_argument("--amrfinder-db", default=None)
     ap.add_argument("--threads", type=int, default=max(1, (os.cpu_count() or 4) // 2))
@@ -442,6 +685,25 @@ def main(argv=None) -> int:
     rc = manifest.get("return_code", 1)
     if manifest.get("stxtyper_active"):
         log("StxTyper ran (Escherichia + --plus): Stx subtypes are in the AMRFinderPlus output.")
+
+    # ---- Step 5b–5d: CGE finders (reuse the assembly; organism-gated) ----
+    # Fall back to the resolved --organism token when there's no Kraken call
+    # (e.g. an assembly input or --no-kraken), so the gating still fires.
+    species = detection.get("dominant_species") or detection.get("organism_token")
+    if not args.no_plasmidfinder:
+        step("Step 5b: Plasmid replicon typing (PlasmidFinder)")
+        pf = run_plasmidfinder(assembly, outdir, args.cge_env, args.cge_db_root)
+        if pf:
+            log(f"  PlasmidFinder results written: {pf.name}")
+    if not args.no_serotypefinder:
+        step("Step 5c: Serotyping (SerotypeFinder)")
+        run_serotypefinder(assembly, outdir, args.cge_env, args.cge_db_root, species)
+    if not args.no_virulencefinder:
+        step("Step 5d: Virulence typing (VirulenceFinder)")
+        vf = run_virulencefinder(assembly, outdir, args.cge_env, args.cge_db_root, species)
+        if vf:
+            log(f"  VirulenceFinder results written: {vf.name}")
+    write_cge_versions(outdir, args.cge_env, args.cge_db_root)
 
     # ---- Step 6: Report (stats workbook + PDF) ----
     step("Step 6: Building report (stats.xlsx + report.pdf)")

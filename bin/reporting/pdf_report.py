@@ -228,12 +228,16 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
 
     # --- Organism identification ---
     story.append(Paragraph("Organism identification", ss["H2"]))
-    story.append(_kv_table([
+    org_rows = [
         ("Dominant species (Kraken2)", f"{det.get('dominant_species','—')} ({det.get('dominant_pct','—')}%)"),
         ("Runner-up species", f"{det.get('runner_up_species','—')} ({det.get('runner_up_pct','—')}%)"),
         ("MLST", f"scheme {det.get('mlst_scheme') or '—'}, ST {det.get('mlst_st') or '—'}"),
-        ("Resolved --organism", f"{org}  (source {det.get('organism_source','—')}, confidence {conf})"),
-    ], ss))
+    ]
+    sero = ctx.get("serotype") or {}
+    if sero.get("serotype"):
+        org_rows.append(("Serotype (SerotypeFinder)", sero["serotype"]))
+    org_rows.append(("Resolved --organism", f"{org}  (source {det.get('organism_source','—')}, confidence {conf})"))
+    story.append(_kv_table(org_rows, ss))
     notes = det.get("notes") or []
     if notes:
         story.append(Spacer(1, 3))
@@ -281,9 +285,74 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         story.append(_banner("No acquired AMR genes or known resistance point mutations detected "
                              "above reporting thresholds.", TEAL, ss))
 
+    # --- Plasmid replicons (PlasmidFinder) — only when the step ran. An empty
+    # result is shown explicitly ("none detected") rather than omitted, because
+    # a confirmed absence is itself a surveillance result. ---
+    if ctx.get("plasmid_ran"):
+        story.append(Paragraph("Plasmid replicons", ss["H2"]))
+        plasmids = ctx.get("plasmids") or []
+        if plasmids:
+            story.append(Paragraph(
+                "Plasmid replicon types identified by PlasmidFinder (BLAST vs. the CGE replicon "
+                "database) on the assembly. %Id is identity to the closest reference; replicons "
+                "co-located with AMR contigs suggest plasmid-borne resistance.", ss["Body"]))
+            hdr = ["Replicon", "Database", "%Id", "Contig", "Accession"]
+            data = [hdr]
+            for p in plasmids[:40]:
+                data.append([
+                    p.get("replicon", ""), p.get("database", ""), p.get("identity", ""),
+                    p.get("contig", ""), p.get("accession", ""),
+                ])
+            story.append(_grid(data, ss, [1.6, 1.4, 0.6, 1.3, 1.1], small=True))
+            if len(plasmids) > 40:
+                story.append(Paragraph(f"… {len(plasmids) - 40} more in plasmidfinder.tsv.", ss["Small"]))
+        else:
+            story.append(_banner("No plasmid replicons detected above thresholds.", TEAL, ss))
+
+    # --- Virulence genes (VirulenceFinder) — species-gated; shown when it ran. ---
+    if ctx.get("virulence_ran"):
+        story.append(Paragraph("Virulence genes", ss["H2"]))
+        vir = ctx.get("virulence_genes") or []
+        if vir:
+            story.append(Paragraph(
+                "Virulence genes identified by VirulenceFinder against the species-specific CGE "
+                "database. %Id is identity to the closest reference.", ss["Body"]))
+            hdr = ["Gene", "Database", "%Id", "Contig"]
+            data = [hdr]
+            for v in vir[:60]:
+                data.append([v.get("gene", ""), v.get("database", ""),
+                             v.get("identity", ""), v.get("contig", "")])
+            story.append(_grid(data, ss, [1.6, 1.8, 0.6, 1.4], small=True))
+            if len(vir) > 60:
+                story.append(Paragraph(f"… {len(vir) - 60} more in virulencefinder.tsv.", ss["Small"]))
+        else:
+            story.append(_banner("No virulence genes detected above thresholds.", TEAL, ss))
+
     # --- Methods & provenance ---
     story.append(Paragraph("Methods &amp; provenance", ss["H2"]))
     iso = ", ".join(r.get("standard", "") for r in (man.get("iso_references") or []) if r.get("standard"))
+    # CGE finders provenance: "<Tool> <version> (DB <commit>)" for each that ran.
+    _cgev = ctx.get("cge_versions") or {}
+
+    def _cge_label(key, label):
+        v = _cgev.get(key)
+        if not v:
+            return None
+        s = f"{label} {v.get('version')}".rstrip() if v.get("version") else label
+        return f"{s} (DB {v['db']})" if v.get("db") else s
+    cge_parts = [_cge_label(k, lbl) for k, lbl in (
+        ("plasmidfinder", "PlasmidFinder"),
+        ("serotypefinder", "SerotypeFinder"),
+        ("virulencefinder", "VirulenceFinder"),
+    )]
+    cge_parts = [p for p in cge_parts if p]
+    if not cge_parts:  # fallback when versions weren't captured (older runs)
+        cge_parts = [n for n, on in (
+            ("PlasmidFinder", ctx.get("plasmid_ran")),
+            ("SerotypeFinder", bool((ctx.get("serotype") or {}).get("serotype"))),
+            ("VirulenceFinder", ctx.get("virulence_ran")),
+        ) if on]
+    cge_line = ", ".join(cge_parts) or "none run"
     story.append(_kv_table([
         ("AMRFinderPlus", f"{vers.get('amrfinder','—')} (DB {vers.get('amrfinder_db','—')})"),
         ("Kraken2 / MLST", f"{vers_extra.get('kraken2','—')} / {vers_extra.get('mlst','—')}"),
@@ -292,6 +361,7 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         ("Thresholds", f"ident_min={opts.get('ident_min','—')} (−1 = curated per-gene), "
                        f"coverage_min={opts.get('coverage_min','—')}"),
         ("--plus", "yes" if opts.get("plus") else "no"),
+        ("CGE finders", cge_line),
         ("Standards referenced", iso or "—"),
     ], ss))
     story.append(Spacer(1, 6))

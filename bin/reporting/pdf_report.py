@@ -331,6 +331,28 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
     # --- Methods & provenance ---
     story.append(Paragraph("Methods &amp; provenance", ss["H2"]))
     iso = ", ".join(r.get("standard", "") for r in (man.get("iso_references") or []) if r.get("standard"))
+    # CGE finders provenance: "<Tool> <version> (DB <commit>)" for each that ran.
+    _cgev = ctx.get("cge_versions") or {}
+
+    def _cge_label(key, label):
+        v = _cgev.get(key)
+        if not v:
+            return None
+        s = f"{label} {v.get('version')}".rstrip() if v.get("version") else label
+        return f"{s} (DB {v['db']})" if v.get("db") else s
+    cge_parts = [_cge_label(k, lbl) for k, lbl in (
+        ("plasmidfinder", "PlasmidFinder"),
+        ("serotypefinder", "SerotypeFinder"),
+        ("virulencefinder", "VirulenceFinder"),
+    )]
+    cge_parts = [p for p in cge_parts if p]
+    if not cge_parts:  # fallback when versions weren't captured (older runs)
+        cge_parts = [n for n, on in (
+            ("PlasmidFinder", ctx.get("plasmid_ran")),
+            ("SerotypeFinder", bool((ctx.get("serotype") or {}).get("serotype"))),
+            ("VirulenceFinder", ctx.get("virulence_ran")),
+        ) if on]
+    cge_line = ", ".join(cge_parts) or "none run"
     story.append(_kv_table([
         ("AMRFinderPlus", f"{vers.get('amrfinder','—')} (DB {vers.get('amrfinder_db','—')})"),
         ("Kraken2 / MLST", f"{vers_extra.get('kraken2','—')} / {vers_extra.get('mlst','—')}"),
@@ -339,12 +361,7 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         ("Thresholds", f"ident_min={opts.get('ident_min','—')} (−1 = curated per-gene), "
                        f"coverage_min={opts.get('coverage_min','—')}"),
         ("--plus", "yes" if opts.get("plus") else "no"),
-        ("CGE finders", ", ".join(
-            n for n, on in (
-                ("PlasmidFinder", ctx.get("plasmid_ran")),
-                ("SerotypeFinder", bool((ctx.get("serotype") or {}).get("serotype"))),
-                ("VirulenceFinder", ctx.get("virulence_ran")),
-            ) if on) or "none run"),
+        ("CGE finders", cge_line),
         ("Standards referenced", iso or "—"),
     ], ss))
     story.append(Spacer(1, 6))

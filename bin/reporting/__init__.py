@@ -281,6 +281,7 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
     serotype = _load_json(outdir / "serotype.json")
     virulence_ran = (outdir / "virulencefinder.tsv").is_file()
     virulence_genes = load_virulencefinder_tsv(outdir / "virulencefinder.tsv")
+    cge_versions = _load_json(outdir / "cge_versions.json")
 
     date_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     items = build_stats_items(sample, date_stamp, fastq_qc, qc, detection, manifest, amr_summary)
@@ -314,6 +315,7 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
             "serotype": serotype,
             "virulence_ran": virulence_ran,
             "virulence_genes": virulence_genes,
+            "cge_versions": cge_versions,
         }
         write_pdf(ctx, pdf_path, outdir)
         result["report_pdf"] = str(pdf_path)

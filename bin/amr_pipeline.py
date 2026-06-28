@@ -396,6 +396,53 @@ def _cge_env(env_dir: Path) -> dict:
     return env
 
 
+def _conda_pkg_version(env_dir: Path, pkg: str) -> str:
+    """Read a conda package's version from the env's conda-meta (the CGE tools are
+    conda-installed, so `pip show` misses them)."""
+    import glob
+    for f in glob.glob(str(env_dir / "conda-meta" / f"{pkg}-*.json")):
+        rest = Path(f).name[len(pkg) + 1:-5]  # strip "<pkg>-" prefix and ".json"
+        return rest.split("-")[0]
+    return ""
+
+
+def _cge_db_commit(env_dir: Path, db_dir: Path) -> str:
+    try:
+        r = subprocess.run(
+            [str(env_dir / "bin" / "git"), "-C", str(db_dir), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, env=_cge_env(env_dir), timeout=30,
+        )
+        return (r.stdout or "").strip()
+    except (subprocess.SubprocessError, OSError):
+        return ""
+
+
+def write_cge_versions(outdir: Path, cge_env: Optional[str], cge_db_root: Optional[str]) -> None:
+    """Record {tool: {version, db}} for each CGE finder that produced output, so
+    the report can cite tool + DB release numbers (provenance/reproducibility)."""
+    paths = _cge_paths(cge_env, cge_db_root)
+    if not paths:
+        return
+    env_dir, _py, _b, _k, db_root = paths
+    # tool pkg, DB dir, the artifact whose presence means "this finder ran"
+    spec = {
+        "plasmidfinder": ("plasmidfinder", "plasmidfinder_db", outdir / "plasmidfinder.json"),
+        "serotypefinder": ("serotypefinder", "serotypefinder_db", outdir / "serotype.json"),
+        "virulencefinder": ("virulencefinder", "virulencefinder_db", outdir / "virulencefinder.tsv"),
+    }
+    versions: Dict[str, Dict[str, str]] = {}
+    for key, (pkg, dbname, marker) in spec.items():
+        if not marker.is_file():
+            continue
+        versions[key] = {
+            "version": _conda_pkg_version(env_dir, pkg),
+            "db": _cge_db_commit(env_dir, db_root / dbname),
+        }
+    if versions:
+        (outdir / "cge_versions.json").write_text(
+            json.dumps(versions, indent=2) + "\n", encoding="utf-8")
+
+
 def _virulence_db_sets(species: Optional[str]) -> str:
     """Map the detected species to the matching VirulenceFinder DB set(s).
 
@@ -656,6 +703,7 @@ def main(argv=None) -> int:
         vf = run_virulencefinder(assembly, outdir, args.cge_env, args.cge_db_root, species)
         if vf:
             log(f"  VirulenceFinder results written: {vf.name}")
+    write_cge_versions(outdir, args.cge_env, args.cge_db_root)
 
     # ---- Step 6: Report (stats workbook + PDF) ----
     step("Step 6: Building report (stats.xlsx + report.pdf)")

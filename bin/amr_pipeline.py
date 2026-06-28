@@ -61,6 +61,23 @@ def _have(tool: str) -> bool:
     return shutil.which(tool) is not None
 
 
+def _total_ram_gb() -> int:
+    try:
+        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 ** 3))
+    except (ValueError, OSError, AttributeError):
+        return 16
+
+
+def _shovill_ram_gb() -> int:
+    """RAM ceiling to hand shovill's internal SPAdes via --ram. shovill defaults
+    this to 16 GB, and SPAdes enforces it as an address-space limit (RLIMIT_AS) —
+    too low for high-depth isolates, where mimalloc's virtual reservations blow
+    past 16 GB and SPAdes aborts ("zero contigs"), silently demoting us to the
+    slower fallback. It's a CEILING, not actual usage (real rss stays ~10-15 GB),
+    so a generous value is safe; cap at 128 and leave headroom on small boxes."""
+    return max(16, min(_total_ram_gb() - 8, 128))
+
+
 def _run(cmd: List[str], cwd: Optional[Path] = None, env: Optional[dict] = None) -> int:
     log(f"$ {' '.join(str(c) for c in cmd)}")
     try:
@@ -107,7 +124,8 @@ def assemble(r1: Path, r2: Optional[Path], outdir: Path, threads: int) -> Option
     if _have("shovill"):
         if work.exists():
             shutil.rmtree(work, ignore_errors=True)
-        cmd = ["shovill", "--outdir", str(work), "--R1", str(r1), "--cpus", str(threads), "--force"]
+        cmd = ["shovill", "--outdir", str(work), "--R1", str(r1), "--cpus", str(threads),
+               "--ram", str(_shovill_ram_gb()), "--force"]
         if r2:
             cmd += ["--R2", str(r2)]
         else:

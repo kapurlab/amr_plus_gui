@@ -228,12 +228,16 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
 
     # --- Organism identification ---
     story.append(Paragraph("Organism identification", ss["H2"]))
-    story.append(_kv_table([
+    org_rows = [
         ("Dominant species (Kraken2)", f"{det.get('dominant_species','—')} ({det.get('dominant_pct','—')}%)"),
         ("Runner-up species", f"{det.get('runner_up_species','—')} ({det.get('runner_up_pct','—')}%)"),
         ("MLST", f"scheme {det.get('mlst_scheme') or '—'}, ST {det.get('mlst_st') or '—'}"),
-        ("Resolved --organism", f"{org}  (source {det.get('organism_source','—')}, confidence {conf})"),
-    ], ss))
+    ]
+    sero = ctx.get("serotype") or {}
+    if sero.get("serotype"):
+        org_rows.append(("Serotype (SerotypeFinder)", sero["serotype"]))
+    org_rows.append(("Resolved --organism", f"{org}  (source {det.get('organism_source','—')}, confidence {conf})"))
+    story.append(_kv_table(org_rows, ss))
     notes = det.get("notes") or []
     if notes:
         story.append(Spacer(1, 3))
@@ -305,6 +309,25 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         else:
             story.append(_banner("No plasmid replicons detected above thresholds.", TEAL, ss))
 
+    # --- Virulence genes (VirulenceFinder) — species-gated; shown when it ran. ---
+    if ctx.get("virulence_ran"):
+        story.append(Paragraph("Virulence genes", ss["H2"]))
+        vir = ctx.get("virulence_genes") or []
+        if vir:
+            story.append(Paragraph(
+                "Virulence genes identified by VirulenceFinder against the species-specific CGE "
+                "database. %Id is identity to the closest reference.", ss["Body"]))
+            hdr = ["Gene", "Database", "%Id", "Contig"]
+            data = [hdr]
+            for v in vir[:60]:
+                data.append([v.get("gene", ""), v.get("database", ""),
+                             v.get("identity", ""), v.get("contig", "")])
+            story.append(_grid(data, ss, [1.6, 1.8, 0.6, 1.4], small=True))
+            if len(vir) > 60:
+                story.append(Paragraph(f"… {len(vir) - 60} more in virulencefinder.tsv.", ss["Small"]))
+        else:
+            story.append(_banner("No virulence genes detected above thresholds.", TEAL, ss))
+
     # --- Methods & provenance ---
     story.append(Paragraph("Methods &amp; provenance", ss["H2"]))
     iso = ", ".join(r.get("standard", "") for r in (man.get("iso_references") or []) if r.get("standard"))
@@ -316,7 +339,12 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         ("Thresholds", f"ident_min={opts.get('ident_min','—')} (−1 = curated per-gene), "
                        f"coverage_min={opts.get('coverage_min','—')}"),
         ("--plus", "yes" if opts.get("plus") else "no"),
-        ("PlasmidFinder", "CGE replicon DB (BLAST)" if ctx.get("plasmid_ran") else "not run"),
+        ("CGE finders", ", ".join(
+            n for n, on in (
+                ("PlasmidFinder", ctx.get("plasmid_ran")),
+                ("SerotypeFinder", bool((ctx.get("serotype") or {}).get("serotype"))),
+                ("VirulenceFinder", ctx.get("virulence_ran")),
+            ) if on) or "none run"),
         ("Standards referenced", iso or "—"),
     ], ss))
     story.append(Spacer(1, 6))

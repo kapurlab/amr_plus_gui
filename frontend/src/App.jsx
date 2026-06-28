@@ -85,6 +85,8 @@ export default function App() {
   const [runKraken, setRunKraken] = useState(true);
   const [runMlst, setRunMlst] = useState(true);
   const [runPlasmidfinder, setRunPlasmidfinder] = useState(true);
+  const [runSerotypefinder, setRunSerotypefinder] = useState(true);
+  const [runVirulencefinder, setRunVirulencefinder] = useState(true);
   const [threads, setThreads] = useState("");
   const [krakenDb, setKrakenDb] = useState("");
   const [amrfinderDb, setAmrfinderDb] = useState("");
@@ -413,6 +415,8 @@ export default function App() {
           run_kraken: runKraken,
           run_mlst: runMlst,
           run_plasmidfinder: runPlasmidfinder,
+          run_serotypefinder: runSerotypefinder,
+          run_virulencefinder: runVirulencefinder,
           threads: threads ? parseInt(threads, 10) : null,
           kraken_db: krakenDb.trim() || null,
           amrfinder_db: amrfinderDb.trim() || null,
@@ -1056,6 +1060,14 @@ export default function App() {
                 <label className="checkbox-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
                   <input type="checkbox" checked={runPlasmidfinder} onChange={(e) => setRunPlasmidfinder(e.target.checked)} disabled={running} />
                   <span>Run PlasmidFinder replicon typing (if available)</span>
+                </label>
+                <label className="checkbox-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
+                  <input type="checkbox" checked={runSerotypefinder} onChange={(e) => setRunSerotypefinder(e.target.checked)} disabled={running} />
+                  <span>Run SerotypeFinder (E. coli only)</span>
+                </label>
+                <label className="checkbox-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
+                  <input type="checkbox" checked={runVirulencefinder} onChange={(e) => setRunVirulencefinder(e.target.checked)} disabled={running} />
+                  <span>Run VirulenceFinder (species-gated)</span>
                 </label>
               </div>
 

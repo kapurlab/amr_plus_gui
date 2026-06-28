@@ -244,6 +244,24 @@ def load_plasmidfinder_tsv(path: Path) -> List[Dict[str, str]]:
     return rows
 
 
+def load_virulencefinder_tsv(path: Path) -> List[Dict[str, str]]:
+    """Parse VirulenceFinder's results_tab.tsv into virulence-gene rows."""
+    rows: List[Dict[str, str]] = []
+    if not Path(path).is_file():
+        return rows
+    import csv as _csv
+    with open(path, encoding="utf-8") as fh:
+        for r in _csv.DictReader(fh, delimiter="\t"):
+            contig = (r.get("Contig") or "").split()[0] if r.get("Contig") else ""
+            rows.append({
+                "gene": (r.get("Virulence factor") or r.get("Gene") or "").strip(),
+                "identity": (r.get("Identity") or "").strip(),
+                "contig": contig,
+                "database": (r.get("Database") or "").strip(),
+            })
+    return rows
+
+
 def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
     """Build stats.xlsx + report.pdf for a finished run dir. Returns the paths
     (or None for any artifact that couldn't be produced). Never raises."""
@@ -256,9 +274,13 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
     manifest = _load_json(outdir / "run_manifest.json")
     amr_rows = load_amrfinder_tsv(outdir / "amrfinder.tsv")
     amr_summary = summarize_amr(amr_rows)
-    # PlasmidFinder: ran iff plasmidfinder.json exists; rows from the TSV.
+    # CGE finders: each "ran" iff its primary artifact exists (distinguishes
+    # 'ran, none found' from 'did not run' for the report's negatives).
     plasmid_ran = (outdir / "plasmidfinder.json").is_file()
     plasmids = load_plasmidfinder_tsv(outdir / "plasmidfinder.tsv")
+    serotype = _load_json(outdir / "serotype.json")
+    virulence_ran = (outdir / "virulencefinder.tsv").is_file()
+    virulence_genes = load_virulencefinder_tsv(outdir / "virulencefinder.tsv")
 
     date_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     items = build_stats_items(sample, date_stamp, fastq_qc, qc, detection, manifest, amr_summary)
@@ -289,6 +311,9 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
             "stats_items": items,
             "plasmid_ran": plasmid_ran,
             "plasmids": plasmids,
+            "serotype": serotype,
+            "virulence_ran": virulence_ran,
+            "virulence_genes": virulence_genes,
         }
         write_pdf(ctx, pdf_path, outdir)
         result["report_pdf"] = str(pdf_path)

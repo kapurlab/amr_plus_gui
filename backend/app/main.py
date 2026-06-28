@@ -950,6 +950,8 @@ class RunPayload(BaseModel):
     run_kraken: bool = True
     run_mlst: bool = True
     run_plasmidfinder: bool = True
+    run_serotypefinder: bool = True
+    run_virulencefinder: bool = True
     threads: Optional[int] = None
     ident_min: Optional[float] = None
     coverage_min: Optional[float] = None
@@ -1023,6 +1025,10 @@ def api_run(payload: RunPayload):
         command.append("--no-mlst")
     if not payload.run_plasmidfinder:
         command.append("--no-plasmidfinder")
+    if not payload.run_serotypefinder:
+        command.append("--no-serotypefinder")
+    if not payload.run_virulencefinder:
+        command.append("--no-virulencefinder")
     cge_env = cfg.get("cge_env", "")
     cge_db_root = cfg.get("cge_db_root", "")
     if cge_env:

@@ -345,7 +345,7 @@ def run_plasmidfinder(
     # which would otherwise resolve to the wrong interpreter under the job's PATH.
     cmd = [py, script, "-i", assembly, "-o", work, "-p", db,
            "-mp", blastn, "-x", "-t", "0.90", "-l", "0.60"]
-    rc = _run(cmd)
+    rc = _run(cmd, env=_cge_env(env_dir))
     src_json = work / "data.json"
     src_tsv = work / "results_tab.tsv"
     if rc == 0 and src_json.is_file():
@@ -366,6 +366,16 @@ def _cge_paths(cge_env: Optional[str], cge_db_root: Optional[str]):
     if not py.is_file():
         return None
     return env_dir, py, env_dir / "bin" / "blastn", env_dir / "bin" / "kma", Path(cge_db_root)
+
+
+def _cge_env(env_dir: Path) -> dict:
+    """Subprocess env with the CGE env's bin FIRST on PATH, so any internal tool
+    a finder shells out to (notably `git`, used by VirulenceFinder to read the DB
+    commit) resolves to the CGE env — where the DB safe.directory is configured —
+    rather than whichever git the OOD session's PATH happens to surface."""
+    env = dict(os.environ)
+    env["PATH"] = f"{env_dir / 'bin'}:" + env.get("PATH", "")
+    return env
 
 
 def _virulence_db_sets(species: Optional[str]) -> str:
@@ -411,7 +421,7 @@ def run_serotypefinder(
     work.mkdir(parents=True, exist_ok=True)
     cmd = [py, script, "-i", assembly, "-o", work, "-p", db,
            "-mp", blastn, "-x", "-t", "0.85", "-l", "0.60"]
-    rc = _run(cmd)
+    rc = _run(cmd, env=_cge_env(env_dir))
     tab = work / "results_tab.tsv"
     if rc != 0 or not tab.is_file():
         log(f"WARNING: SerotypeFinder failed (rc={rc}).")
@@ -461,7 +471,7 @@ def run_virulencefinder(
     # Run via `python -m virulencefinder` (no console-script shebang to fight).
     cmd = [py, "-m", "virulencefinder", "-ifa", assembly, "-o", work, "-p", db,
            "-d", db_sets, "-b", blastn, "-k", kma, "-x", "-t", "0.90", "-l", "0.60"]
-    rc = _run(cmd)
+    rc = _run(cmd, env=_cge_env(env_dir))
     tab = work / "results_tab.tsv"
     src_json = work / "data.json"
     if rc == 0 and tab.is_file():

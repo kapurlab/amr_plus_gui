@@ -490,10 +490,36 @@ export default function App() {
               finish(job.status);                 // real terminal status from the exit code
             })
             .catch(() => {
-              // status endpoint also unreachable — keep waiting rather than
-              // falsely failing; give up only after a long sustained outage.
-              if (errors < 60) { setTimeout(tick, 2000); return; }
-              finish("failed");
+              // Both logtext AND the status endpoint are unreachable — a sustained
+              // OOD /rnode proxy outage. NEVER invent a "failed" verdict: the backend
+              // is the only authority on the outcome, and these runs almost always
+              // finish fine. Back off; after a long outage, reconcile via the results
+              // endpoint — outputs present => the run succeeded; otherwise stop
+              // polling but leave the status non-failed and prompt a reload.
+              if (errors < 90) { setTimeout(tick, errors < 30 ? 2000 : 5000); return; }
+              if (finished || watchIdRef.current !== id) { done(); return; }
+              fetch(`./api/jobs/${id}/results`)
+                .then((r) => (r.ok ? r.json() : Promise.reject(new Error("http " + r.status))))
+                .then((files) => {
+                  finished = true;
+                  setRunning(false);
+                  if (Array.isArray(files) && files.length > 0) {
+                    setJobStatus("succeeded");
+                  } else {
+                    setCurrentStep("Connection lost — the run may still be in progress. Reload to check.");
+                  }
+                  if (samp) { loadSampleResults(samp.project, samp); loadAmrTable(samp.project, samp); }
+                  loadProjects();
+                  done();
+                })
+                .catch(() => {
+                  // Even results are unreachable: stop polling, but never show
+                  // "failed" — the run is not known to have failed.
+                  finished = true;
+                  setRunning(false);
+                  setCurrentStep("Connection lost — reload to check results.");
+                  done();
+                });
             });
         });
     };

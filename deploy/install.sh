@@ -103,7 +103,16 @@ else
   run "${CONDA_FRONTEND}" env create "${CREATE_FLAG[@]}" -f "${ENV_FILE}"
 fi
 
+# A --personal env may have just been created above; if so, the ENV_BIN probed
+# earlier (via `conda run` before the env existed) is empty, which would make
+# PYTHON="/python". Re-resolve now that the env exists — prefer the live prefix,
+# fall back to <conda base>/envs/<name> (where `conda env create -n` puts it).
+if [[ ${USE_PERSONAL} -eq 1 && ! -x "${ENV_BIN}/python" ]]; then
+  ENV_BIN="$("${CONDA}" run -n "${PERSONAL_ENV_NAME}" sh -c 'echo $CONDA_PREFIX/bin' 2>/dev/null || true)"
+  [[ -x "${ENV_BIN}/python" ]] || ENV_BIN="$("${CONDA}" info --base 2>/dev/null)/envs/${PERSONAL_ENV_NAME}/bin"
+fi
 PYTHON="${ENV_BIN}/python"
+[[ ${DRY_RUN} -eq 1 || -x "${PYTHON}" ]] || die "env python not found at '${PYTHON}' — ${ENV_DESC} did not build correctly."
 # Put the env's bin on PATH for every tool call below. amrfinder needs its
 # BLAST+/HMMER deps on PATH, and the `mlst` check is a Perl script whose
 # `#!/usr/bin/env perl` shebang must resolve to the env Perl (which carries

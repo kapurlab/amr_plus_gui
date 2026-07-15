@@ -6,5 +6,4 @@ backend/jobs/
 # build artifacts
 node_modules/
 node_modules
-frontend/dist/
 *.pyc

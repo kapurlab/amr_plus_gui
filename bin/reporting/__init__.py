@@ -226,7 +226,7 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
     """Build stats.xlsx + report.pdf for a finished run dir. Returns the paths
     (or None for any artifact that couldn't be produced). Never raises."""
     outdir = Path(outdir)
-    result: Dict[str, Optional[str]] = {"stats_xlsx": None, "report_pdf": None}
+    result: Dict[str, Optional[str]] = {"stats_xlsx": None, "report_html": None, "report_pdf": None}
 
     fastq_qc = _load_json(outdir / "fastq_qc.json")
     qc = _load_json(outdir / "qc.json")
@@ -248,26 +248,55 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
     except Exception as exc:  # noqa: BLE001 — soft-fail, report it
         log(f"  WARNING: stats workbook not written: {exc}")
 
-    # --- PDF report ---
+    ctx = {
+        "sample": sample,
+        "date": date_stamp,
+        "fastq_qc": fastq_qc,
+        "qc": qc,
+        "detection": detection,
+        "manifest": manifest,
+        "amr_rows": amr_rows,
+        "amr_summary": amr_summary,
+        "stats_items": items,
+    }
+
+    # --- HTML report (always; self-contained, no native deps) ---
+    html_path = outdir / "report.html"
     try:
-        from .pdf_report import write_pdf
-        pdf_path = outdir / "report.pdf"
-        ctx = {
-            "sample": sample,
-            "date": date_stamp,
-            "fastq_qc": fastq_qc,
-            "qc": qc,
-            "detection": detection,
-            "manifest": manifest,
-            "amr_rows": amr_rows,
-            "amr_summary": amr_summary,
-            "stats_items": items,
-        }
-        write_pdf(ctx, pdf_path, outdir)
-        result["report_pdf"] = str(pdf_path)
-        log(f"  wrote {pdf_path.name}")
+        from .html_report import load_mlst, write_html
+        ctx["mlst"] = load_mlst(outdir)
+        write_html(ctx, html_path, outdir)
+        result["report_html"] = str(html_path)
+        log(f"  wrote {html_path.name}")
     except Exception as exc:  # noqa: BLE001
-        log(f"  WARNING: PDF report not written ({exc}). Is reportlab installed?")
+        log(f"  WARNING: HTML report not written: {exc}")
+        html_path = None
+
+    # --- PDF report: prefer WeasyPrint(report.html) for unity with the HTML;
+    #     fall back to the pure-Python reportlab report when WeasyPrint (or its
+    #     native libs) is unavailable, so there is always a PDF. ---
+    pdf_path = outdir / "report.pdf"
+    made_pdf = False
+    if html_path is not None:
+        try:
+            from .html_report import html_to_pdf
+            if html_to_pdf(html_path, pdf_path):
+                made_pdf = True
+                log(f"  wrote {pdf_path.name} (from HTML via WeasyPrint)")
+            else:
+                log("  NOTE: WeasyPrint unavailable — using the reportlab PDF instead.")
+        except Exception as exc:  # noqa: BLE001
+            log(f"  WARNING: HTML→PDF conversion failed ({exc}); falling back to reportlab.")
+    if not made_pdf:
+        try:
+            from .pdf_report import write_pdf
+            write_pdf(ctx, pdf_path, outdir)
+            made_pdf = True
+            log(f"  wrote {pdf_path.name} (reportlab)")
+        except Exception as exc:  # noqa: BLE001
+            log(f"  WARNING: PDF report not written ({exc}). Is reportlab installed?")
+    if made_pdf:
+        result["report_pdf"] = str(pdf_path)
 
     return result
 

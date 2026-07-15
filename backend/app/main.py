@@ -503,6 +503,32 @@ def api_project_sra_crosswalk(name: str):
     return FileResponse(crosswalk, media_type="text/plain")
 
 
+@app.get("/api/projects/{name}/sra/status")
+def api_project_sra_status(name: str):
+    """Per-accession result of the most recent SRA download (accession -> ok/fail),
+    read from sra_download_status.tsv. Lets the GUI show exactly which samples
+    downloaded and which failed, instead of only a count in the log."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    status_file = project_dir / "download" / "sra_download_status.tsv"
+    accs: List[Dict[str, str]] = []
+    if status_file.is_file():
+        for line in status_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2 and parts[0].strip():
+                accs.append({"accession": parts[0].strip(), "status": parts[1].strip()})
+    succeeded = sum(1 for a in accs if a["status"] == "ok")
+    failed = [a["accession"] for a in accs if a["status"] != "ok"]
+    return JSONResponse({
+        "accessions": accs,
+        "succeeded": succeeded,
+        "failed": len(failed),
+        "failed_accessions": failed,
+        "total": len(accs),
+    })
+
+
 @app.get("/api/projects/{name}/samples")
 def api_project_samples(name: str):
     project_dir = _get_project_dir(name)
@@ -1145,6 +1171,8 @@ def _result_category(rel: str) -> Optional[str]:
 
     if name == "report.pdf":
         return "report_pdf"
+    if name == "report.html":
+        return "report_html"
     if name.endswith("_stats.xlsx"):
         return "stats_xlsx"
     if name == "fastq_qc.json":
@@ -1174,6 +1202,7 @@ def _result_category(rel: str) -> Optional[str]:
 
 _CATEGORY_ORDER = {
     "report_pdf": 0,
+    "report_html": 1,
     "stats_xlsx": 1,
     "amrfinder_tsv": 2,
     "mutation_all": 3,
@@ -1192,6 +1221,7 @@ _CATEGORY_ORDER = {
 def _result_label(rel: str, category: Optional[str]) -> str:
     return {
         "report_pdf": "Report (PDF)",
+        "report_html": "Report (HTML)",
         "stats_xlsx": "Statistics workbook (Excel)",
         "amrfinder_tsv": "AMRFinderPlus results (TSV)",
         "mutation_all": "All assessed mutations (TSV)",

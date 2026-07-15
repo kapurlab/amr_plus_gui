@@ -389,16 +389,24 @@ printf '%s\n' "${{ACCESSIONS[@]}}" | \
   xargs -P {concurrency} -n 1 -I {{}} bash -c 'download_one "$@"' _ {{}}
 
 # ── Tally results from status files ────────────────────────────
+# Persist a per-accession status file (accession<TAB>ok|fail) so the GUI can
+# show exactly which samples downloaded and which failed — the previous version
+# deleted the .status_* files and reported only a count, so a partial batch
+# (e.g. one of two accessions failing) was easy to miss.
 
 SUCCEEDED=0
 FAILED_COUNT=0
 FAILED_LIST=""
+STATUS_FILE="sra_download_status.tsv"
+: > "$STATUS_FILE"
 for acc in "${{ACCESSIONS[@]}}"; do
   if [ -f ".status_${{acc}}" ] && [ "$(cat ".status_${{acc}}")" = "ok" ]; then
     SUCCEEDED=$((SUCCEEDED + 1))
+    printf '%s\tok\n' "$acc" >> "$STATUS_FILE"
   else
     FAILED_COUNT=$((FAILED_COUNT + 1))
     FAILED_LIST="$FAILED_LIST $acc"
+    printf '%s\tfail\n' "$acc" >> "$STATUS_FILE"
   fi
   rm -f ".status_${{acc}}"
 done

@@ -64,6 +64,7 @@ export default function App() {
   const [activeProject, setActiveProject] = useState("");
   const [addPath, setAddPath] = useState({});
   const [sraText, setSraText] = useState({});
+  const [sraStatus, setSraStatus] = useState({});   // project -> {accessions,succeeded,failed,...}
   const [addStatus, setAddStatus] = useState({});
   const [inputsByProj, setInputsByProj] = useState({});
   const uploadProjRef = useRef("");
@@ -301,13 +302,28 @@ export default function App() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setStat(name, `Download failed: ${data.detail || res.status}`); return; }
-      setStat(name, "Downloading… progress shows in the Pipeline Log below.");
+      setStat(name, `Downloading ${accessions.length} accession${accessions.length === 1 ? "" : "s"}… per-sample status appears below when done.`);
       setSraText((m) => ({ ...m, [name]: "" }));
+      setSraStatus((m) => ({ ...m, [name]: null }));
       setJobId(data.job_id);
       setJobStatus("running");
       setLogLines([]);
-      streamLogUntilDone(data.job_id, null, () => {
-        setStat(name, "Download finished — see samples below.");
+      streamLogUntilDone(data.job_id, null, async () => {
+        // Surface the per-accession result so a partial batch is obvious.
+        try {
+          const sres = await fetch(`./api/projects/${encodeURIComponent(name)}/sra/status`);
+          const sdata = await sres.json().catch(() => null);
+          if (sdata) {
+            setSraStatus((m) => ({ ...m, [name]: sdata }));
+            setStat(name, sdata.failed
+              ? `Download finished: ${sdata.succeeded}/${sdata.total} succeeded, ${sdata.failed} failed (${sdata.failed_accessions.join(", ")}). See the log for why.`
+              : `Download finished: all ${sdata.succeeded} succeeded.`);
+          } else {
+            setStat(name, "Download finished — see samples below.");
+          }
+        } catch {
+          setStat(name, "Download finished — see samples below.");
+        }
         refreshAfterLoad(name);
       });
     } catch (e) {
@@ -930,7 +946,29 @@ export default function App() {
                       >
                         Download{parseAccessions(sraText[activeProject]).length ? ` (${parseAccessions(sraText[activeProject]).length})` : ""}
                       </button>
-                      <div className="form-hint">Runs in the background; progress appears in the Pipeline Log.</div>
+                      <div className="form-hint">Runs in the background; progress appears in the Pipeline Log. Per-sample status shows below when the download finishes.</div>
+                      {sraStatus[activeProject]?.accessions?.length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <div className="muted" style={{ fontSize: 12, fontWeight: 600 }}>
+                            Last download: {sraStatus[activeProject].succeeded}/{sraStatus[activeProject].total} succeeded
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
+                            {sraStatus[activeProject].accessions.map((a) => (
+                              <div key={a.accession} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                                <span style={{ fontFamily: "monospace" }}>{a.accession}</span>
+                                <span style={{ color: a.status === "ok" ? "var(--success, #6BAA75)" : "var(--danger, #C46A6A)", fontWeight: 600 }}>
+                                  {a.status === "ok" ? "✓ downloaded" : "✗ failed"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          {sraStatus[activeProject].failed > 0 && (
+                            <div className="form-hint" style={{ marginTop: 4 }}>
+                              Failed accessions couldn't be fetched by any method (S3/ENA) — often a not-yet-mirrored or restricted run, or a transient NCBI/ENA hiccup. See the Pipeline Log for the per-method errors, and retry.
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

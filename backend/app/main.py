@@ -925,6 +925,7 @@ class ConfigPayload(BaseModel):
     amrfinder_db: Optional[str] = None
     projects_root: Optional[str] = None
     shared_projects_root: Optional[str] = None
+    saved_project_roots: Optional[List[str]] = None
 
 
 @app.post("/api/config")
@@ -932,11 +933,15 @@ def api_save_config(payload: ConfigPayload):
     cfg = load_config()
     updates = payload.model_dump(exclude_none=True)
     cfg.update(updates)
-    new_root = (updates.get("projects_root") or "").strip()
-    if new_root:
-        recent = [r for r in cfg.get("recent_projects_roots", []) if r != new_root]
-        recent.insert(0, new_root)
-        cfg["recent_projects_roots"] = recent[:10]
+    roots = cfg.get("saved_project_roots") or []
+    if isinstance(roots, list):
+        seen, cleaned = set(), []
+        for r in roots:
+            r = (r or "").strip()
+            if r and r not in seen:
+                seen.add(r)
+                cleaned.append(r)
+        cfg["saved_project_roots"] = cleaned
     save_config(cfg)
     return JSONResponse({"ok": True})
 

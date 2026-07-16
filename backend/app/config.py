@@ -47,6 +47,7 @@ _AMRFINDER_DB_DEFAULT = _first_existing(
 DEFAULTS: Dict[str, Any] = {
     "projects_root": str(Path.home() / "projects"),
     "shared_projects_root": _DEFAULT_SHARED_PROJECTS_ROOT,
+    "saved_project_roots": [],
     "kraken_db": _KRAKEN_DB_DEFAULT,
     "amrfinder_db": _AMRFINDER_DB_DEFAULT,
 }

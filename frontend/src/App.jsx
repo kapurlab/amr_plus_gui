@@ -509,6 +509,7 @@ export default function App() {
         kraken_db: settingsDraft.kraken_db,
         amrfinder_db: settingsDraft.amrfinder_db,
         projects_root: settingsDraft.projects_root,
+        saved_project_roots: settingsDraft.saved_project_roots,
       }),
     })
       .then((r) => r.json())
@@ -518,6 +519,30 @@ export default function App() {
         loadProjects();
       })
       .catch(() => {});
+  }
+
+  function persistRoots(next) {
+    const merged = { ...settingsDraft, ...next };
+    setSettingsDraft(merged);
+    fetch("./api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projects_root: merged.projects_root, saved_project_roots: merged.saved_project_roots }),
+    })
+      .then(() => fetch("./api/config").then((r) => r.json()).then(setSettingsDraft))
+      .catch(() => {});
+  }
+  function saveCurrentLocation() {
+    const cur = (settingsDraft.projects_root || "").trim();
+    const list = settingsDraft.saved_project_roots || [];
+    if (!cur || list.includes(cur)) return;
+    persistRoots({ saved_project_roots: [...list, cur] });
+  }
+  function removeSavedLocation(p) {
+    persistRoots({ saved_project_roots: (settingsDraft.saved_project_roots || []).filter((r) => r !== p) });
+  }
+  function jumpToLocation(p) {
+    if (p) persistRoots({ projects_root: p });
   }
 
   const logLineClass = (line) => {
@@ -640,18 +665,20 @@ export default function App() {
                   />
                   <button type="button" className="ghost" onClick={openFolderBrowser}>Browse…</button>
                 </div>
-                {Array.isArray(settingsDraft.recent_projects_roots) && settingsDraft.recent_projects_roots.length > 0 && (
-                  <select
-                    style={{ marginTop: 6, width: "100%" }}
-                    value=""
-                    onChange={(e) => { if (e.target.value) setSettingsDraft((d) => ({ ...d, projects_root: e.target.value })); }}
-                  >
-                    <option value="">↻ Recent roots…</option>
-                    {settingsDraft.recent_projects_roots.map((r) => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </select>
-                )}
+                <div className="settings-row" style={{ marginTop: 6 }}>
+                  <label>Saved locations</label>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                    <select value="" onChange={(e) => jumpToLocation(e.target.value)}
+                      disabled={!(settingsDraft.saved_project_roots && settingsDraft.saved_project_roots.length)}>
+                      <option value="">{settingsDraft.saved_project_roots && settingsDraft.saved_project_roots.length ? "↦ Jump to a saved location…" : "No saved locations yet"}</option>
+                      {(settingsDraft.saved_project_roots || []).map((r) => (<option key={r} value={r}>{r}</option>))}
+                    </select>
+                    <button type="button" className="ghost" onClick={saveCurrentLocation}
+                      disabled={!settingsDraft.projects_root || (settingsDraft.saved_project_roots || []).includes(settingsDraft.projects_root)}>★ Save current</button>
+                    <button type="button" className="ghost" onClick={() => removeSavedLocation(settingsDraft.projects_root)}
+                      disabled={!(settingsDraft.saved_project_roots || []).includes(settingsDraft.projects_root)}>Remove</button>
+                  </span>
+                </div>
                 <div className="form-hint">New projects are created under this root. Shared projects at /srv/kapurlab/projects/ are always visible. Click Save to apply.</div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

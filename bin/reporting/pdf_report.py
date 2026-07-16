@@ -338,7 +338,12 @@ def _img_h(path: Path, width_in: float) -> float:
 
 def _grid(data, ss, col_in, small=False):
     style = ss["Small"] if small else ss["Cell"]
-    body = [[Paragraph(str(c), style) for c in row] for row in data]
+    # Header cells are Paragraph flowables, which ignore the table's TEXTCOLOR,
+    # so give the first row its own white, bold style for contrast on the teal.
+    hdr_style = ParagraphStyle("GridHdr", parent=style, textColor=colors.white,
+                               fontName="Helvetica-Bold")
+    body = [[Paragraph(str(c), hdr_style if i == 0 else style) for c in row]
+            for i, row in enumerate(data)]
     t = Table(body, colWidths=[c * inch for c in col_in], repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), TEAL),

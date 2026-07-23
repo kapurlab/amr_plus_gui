@@ -261,6 +261,31 @@ class JobManager:
 
         command_argv = [str(part) for part in command]
         command_display = shlex.join(command_argv)
+        # Provenance: record the exact command into <cwd>/.provenance/<tool>_run_cmd.txt
+        # so the sample/output folder plainly shows what was run on the command line to
+        # produce these results. Best-effort, append-per-run — never breaks a job.
+        try:
+            if cwd:
+                _tool = Path(__file__).resolve().parents[2].name
+                _prov = Path(cwd) / ".provenance"
+                _prov.mkdir(parents=True, exist_ok=True)
+                _name = (self._jobs.get(job_id) or {}).get("name", "")
+                _ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+                _entry = [
+                    "# " + "=" * 64,
+                    f"# {_tool} - run command",
+                    f"# run at:      {_ts}",
+                    (f"# job:         {_name}" if _name else "# job:"),
+                    f"# working dir: {cwd}",
+                    "# " + "-" * 64,
+                    "# Command executed (copy/paste to reproduce):",
+                    command_display,
+                    "",
+                ]
+                with open(_prov / f"{_tool}_run_cmd.txt", "a", encoding="utf-8") as _fh:
+                    _fh.write("\n".join(_entry) + "\n")
+        except Exception:
+            pass
         wrapper_code = (
             "import subprocess, sys\n"
             "exit_path = sys.argv[1]\n"

@@ -26,6 +26,54 @@ Usage:
       [--ident-min -1] [--coverage-min 0.5]
 """
 
+# --- provenance: log every external command this pipeline runs (best-effort) ---
+# Attribute-level wrap of subprocess.Popen (which run/call/check_* all funnel
+# through) + os.system, so EVERY external tool command (kraken2, amrfinder,
+# blastn, spades, raxml, …) is recorded once to
+# <outdir>/.provenance/<tool>_commands.txt — the exact commands that produced the
+# results in this folder. Never alters behaviour; logging failures are swallowed
+# and the original call always runs, so it can't break the pipeline.
+def _install_provenance_capture():
+    import os as _o, subprocess as _s, shlex as _sh
+    from pathlib import Path as _P
+    from datetime import datetime as _dt
+    _tool = _P(__file__).resolve().parents[1].name
+    _out = _P.cwd() / ".provenance"
+    _f = _out / (_tool + "_commands.txt")
+    def _log(_cmd):
+        try:
+            _out.mkdir(parents=True, exist_ok=True)
+            _ln = _cmd if isinstance(_cmd, str) else _sh.join(str(c) for c in _cmd)
+            _ts = _dt.now().astimezone().strftime("%H:%M:%S")
+            with open(_f, "a", encoding="utf-8") as _h:
+                _h.write(_ts + "  " + _ln + "\n")
+        except Exception:
+            pass
+    try:
+        _out.mkdir(parents=True, exist_ok=True)
+        with open(_f, "a", encoding="utf-8") as _h:
+            _h.write("\n# === %s run %s — external commands that produced results in this folder ===\n"
+                     % (_tool, _dt.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")))
+    except Exception:
+        pass
+    _orig_popen = _s.Popen
+    class _Popen(_orig_popen):
+        def __init__(self, args, *a, **k):
+            _log(args)
+            super().__init__(args, *a, **k)
+    _s.Popen = _Popen
+    _osys = _o.system
+    def _sysw(_cmd):
+        _log(_cmd)
+        return _osys(_cmd)
+    _o.system = _sysw
+try:
+    _install_provenance_capture()
+except Exception:
+    pass
+# --- end provenance ------------------------------------------------------------
+
+
 import argparse
 import json
 import multiprocessing

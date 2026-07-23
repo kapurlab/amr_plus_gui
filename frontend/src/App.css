@@ -424,3 +424,25 @@ button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20p
   .app-header { flex-direction: column; align-items: flex-start; }
   .app { padding: 18px; }
 }
+
+/* ── Appearance ─────────────────────────────────────────────────────────── */
+.header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.theme-switch { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
+.theme-switch button { min-width: 34px; padding: 5px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 14px; line-height: 1.1; cursor: pointer; }
+.theme-switch button:hover { color: var(--text); background: color-mix(in srgb, var(--panel) 70%, transparent); }
+.theme-switch button[aria-pressed="true"] { color: var(--text); background: var(--panel); box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+.theme-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+html[data-theme="dark"] {
+  --bg: #0c1217; --panel: #141d24; --panel-2: #1b2730; --text: #e8eef1;
+  --muted: #9aa9b2; --accent: #66b7b3; --accent-2: #d59076; --accent-text: #081415;
+  --danger: #ef8c8c; --success: #86ce91; --warning: #e8c47e; --border: #2d3d47;
+  --shadow: rgba(0,0,0,.32);
+}
+html[data-theme="dark"] body { background: radial-gradient(circle at top left,#17232b 0%,var(--bg) 45%),radial-gradient(circle at 80% 0%,#201b1b 0%,transparent 45%),var(--bg); }
+html[data-theme="dark"] .version-tag { background: #17364a; color: #9ed8fa; }
+html[data-theme="dark"] input, html[data-theme="dark"] select, html[data-theme="dark"] textarea { color: var(--text); background: #101920; border-color: var(--border); }
+html[data-theme="dark"] .scope-shared, html[data-theme="dark"] .badge-pe { background: #172f4b; color: #9ac4ff; }
+html[data-theme="dark"] .scope-personal, html[data-theme="dark"] .badge-se { background: #183728; color: #9ed9ad; }
+html[data-theme="dark"] .note.warning { color: #efca8d; background: #352818; border-color: #674725; }
+html[data-theme="dark"] .alert-banner { color: #f0b39d; background: #39241e; border-color: #6b4032; }
+@media (max-width:720px) { .header-actions { width: 100%; justify-content: space-between; } }

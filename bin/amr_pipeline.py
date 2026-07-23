@@ -27,26 +27,26 @@ Usage:
 """
 
 # --- provenance: log every external command this pipeline runs (best-effort) ---
-# Attribute-level wrap of subprocess.Popen (which run/call/check_* all funnel
-# through) + os.system, so EVERY external tool command (kraken2, amrfinder,
-# blastn, spades, raxml, …) is recorded once to
-# <outdir>/.provenance/<tool>_commands.txt — the exact commands that produced the
-# results in this folder. Never alters behaviour; logging failures are swallowed
-# and the original call always runs, so it can't break the pipeline.
+# Captures commands launched directly by this orchestrator. Child executables
+# remain responsible for their own nested-command provenance.
 def _install_provenance_capture():
-    import os as _o, subprocess as _s, shlex as _sh
+    import os as _o, subprocess as _s, shlex as _sh, sys as _sys
     from pathlib import Path as _P
     from datetime import datetime as _dt
     _tool = _P(__file__).resolve().parents[1].name
-    _out = _P.cwd() / ".provenance"
+    _argv = _sys.argv[1:]
+    _dest = next((_argv[i + 1] for i, x in enumerate(_argv[:-1]) if x == "--outdir"), None)
+    _dest = next((x.split("=", 1)[1] for x in _argv if x.startswith("--outdir=")), _dest)
+    _out = _P(_dest).expanduser().resolve() / ".provenance" if _dest else _P.cwd() / ".provenance"
     _f = _out / (_tool + "_commands.txt")
-    def _log(_cmd):
+    def _log(_cmd, _cwd=None):
         try:
             _out.mkdir(parents=True, exist_ok=True)
             _ln = _cmd if isinstance(_cmd, str) else _sh.join(str(c) for c in _cmd)
             _ts = _dt.now().astimezone().strftime("%H:%M:%S")
             with open(_f, "a", encoding="utf-8") as _h:
-                _h.write(_ts + "  " + _ln + "\n")
+                _where = _P(_cwd).resolve() if _cwd else _P.cwd().resolve()
+                _h.write(_ts + "  cwd=" + _sh.quote(str(_where)) + "  " + _ln + "\n")
         except Exception:
             pass
     try:
@@ -59,7 +59,7 @@ def _install_provenance_capture():
     _orig_popen = _s.Popen
     class _Popen(_orig_popen):
         def __init__(self, args, *a, **k):
-            _log(args)
+            _log(args, k.get("cwd"))
             super().__init__(args, *a, **k)
     _s.Popen = _Popen
     _osys = _o.system

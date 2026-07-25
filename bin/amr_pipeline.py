@@ -92,7 +92,43 @@ _CONFIG_DIR = _REPO_ROOT / "config"
 import detect_organism  # local import (PYTHONPATH includes bin/)
 import run_amrfinder
 
-_MLST_GUI = Path("/srv/kapurlab/tools/mlst_gui")
+def _sibling_tool_dir(name: str) -> Path:
+    """Where a sibling suite tool is installed, on ANY platform.
+
+    Resolved, never assumed. A fixed "/srv/kapurlab/tools/<name>" is correct only
+    on the original lab server; on macOS, WSL and per-user Linux installs the
+    checkouts live under <BDTOOLS_HOME>/checkouts, and at another site anywhere
+    else. Getting this wrong fails SILENTLY — the caller just logs "not found"
+    and skips the MLST cross-check — so probe in order of authority:
+
+      1. BDTOOLS_TOOLS_ROOT — exported by the launcher, which already resolved it
+      2. our own parent dir — true whenever tools are checked out side by side
+      3. <BDTOOLS_HOME>/checkouts — the documented per-user install location
+      4. the historical lab-server path, LAST, so existing servers keep working
+
+    Returns the first candidate that exists, else the first candidate, so a
+    "not found at ..." message names somewhere plausible for this machine."""
+    candidates = []
+    root = os.environ.get("BDTOOLS_TOOLS_ROOT", "").strip()
+    if root:
+        candidates.append(Path(root) / name)
+    candidates.append(_REPO_ROOT.parent / name)
+    home = os.environ.get("BDTOOLS_HOME", "").strip()
+    if not home:
+        xdg = os.environ.get("XDG_DATA_HOME", "").strip()
+        home = str(Path(xdg) / "bdtools") if xdg else str(Path.home() / ".local/share/bdtools")
+    candidates.append(Path(home) / "checkouts" / name)
+    candidates.append(Path("/srv/kapurlab/tools") / name)
+    for c in candidates:
+        try:
+            if c.is_dir():
+                return c
+        except OSError:
+            continue
+    return candidates[0]
+
+
+_MLST_GUI = _sibling_tool_dir("mlst_gui")
 _GENOME_SIZES = _CONFIG_DIR / "genome_sizes.yaml"
 
 

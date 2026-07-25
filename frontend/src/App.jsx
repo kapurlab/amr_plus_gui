@@ -106,6 +106,7 @@ export default function App() {
 
   // Which sample's results the bottom Results pane shows.
   const [selectedResultKey, setSelectedResultKey] = useState(null);
+  const [krakenSamples, setKrakenSamples] = useState({});   // project -> [{sample, has_krona}]
 
   const logRef = useRef(null);
   const eventSourceRef = useRef(null);
@@ -365,6 +366,23 @@ export default function App() {
       .catch(() => setSampleResults((m) => ({ ...m, [key]: { loading: false, present: false, status: "none", files: [] } })));
   }
 
+  // Which samples in this project also have a Kraken run with a Krona chart.
+  // Krona is written by the Kraken ID Parse GUI into <project>/kraken/<sample>/,
+  // outside this tool's run dir, so it can never appear in amr-results — it needs
+  // its own lookup or the chart is simply invisible here.
+  function loadKrakenSamples(project) {
+    fetch(`./api/projects/${encodeURIComponent(project)}/kraken/samples`)
+      .then((r) => r.json())
+      .then((d) => setKrakenSamples((m) => ({ ...m, [project]: d.samples || [] })))
+      .catch(() => setKrakenSamples((m) => ({ ...m, [project]: [] })));
+  }
+
+  function hasKrona(project, sample) {
+    return (krakenSamples[project] || []).some(
+      (k) => k.has_krona && (k.sample === sample || k.sample.startsWith(`${sample}_`))
+    );
+  }
+
   function loadAmrTable(project, s) {
     const key = sampleKey(project, s);
     setAmrTables((m) => ({ ...m, [key]: { ...(m[key] || {}), loading: true } }));
@@ -383,6 +401,7 @@ export default function App() {
       setShowResults(true);
       if (!sampleResults[key]) loadSampleResults(project, s);
       if (!amrTables[key]) loadAmrTable(project, s);
+      if (!krakenSamples[project]) loadKrakenSamples(project);
     }
   }
 
@@ -1225,11 +1244,19 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Download links */}
+                  {/* Download links.
+                      The backend already decides what counts as a primary result
+                      (_result_category returns null for intermediates) and what
+                      order to show it in (_CATEGORY_ORDER). A second allow-list
+                      here silently dropped whole categories it never got updated
+                      for — krona, report_pdf, stats_xlsx, fastq_qc, kraken_report
+                      — so files visible in the Projects tree (which renders
+                      res.files unfiltered) were missing from this pane. Deny only
+                      the raw log, and let the backend stay authoritative. */}
                   {resFiles?.files?.length > 0 && (
                     <div className="results-list" style={{ marginBottom: 12 }}>
                       {resFiles.files
-                        .filter((f) => ["amrfinder_tsv", "mutation_all", "run_manifest", "organism_detection", "qc", "mlst", "assembly_fasta"].includes(f.category))
+                        .filter((f) => f.category !== "log")
                         .map((f) => {
                           const base = `./api/projects/${encodeURIComponent(selectedResultKey.split("::")[0])}/file?path=${encodeURIComponent(f.path)}`;
                           return (
@@ -1244,6 +1271,23 @@ export default function App() {
                             </div>
                           );
                         })}
+                    </div>
+                  )}
+
+                  {/* Cross-tool: the sample's Kraken taxonomy chart, if Kraken has
+                      been run on it. Lives under <project>/kraken/<sample>/, so it
+                      is not part of this tool's results and needs its own link. */}
+                  {hasKrona(selectedResultKey.split("::")[0], selectedResultKey.split("::")[1]) && (
+                    <div className="results-list" style={{ marginBottom: 12 }}>
+                      <div className="results-item">
+                        <span className="result-icon">📊</span>
+                        <a className="result-name result-link"
+                           href={`./api/projects/${encodeURIComponent(selectedResultKey.split("::")[0])}/kraken/samples/${encodeURIComponent(selectedResultKey.split("::")[1])}/krona`}
+                           target="_blank" rel="noopener noreferrer">
+                          Krona taxonomy chart (from Kraken ID Parse)
+                        </a>
+                        <span className="result-size muted">interactive</span>
+                      </div>
                     </div>
                   )}
 

@@ -746,16 +746,24 @@ def api_sample_amr_table(name: str, sample: str):
 
 
 # ---------------------------------------------------------------------------
-# Cross-tool visibility — surface vSNP results for a sample (read-only).
+# Cross-tool visibility — surface sibling tools' results for a sample (read-only).
+#
+# Every tool in the suite creates the same project skeleton (download/, amr/,
+# kraken/, step1/, ...), so a sample analysed here may also have been run through
+# Kraken ID Parse or vSNP. Those outputs live OUTSIDE this tool's run dir, so
+# _collect_result_files() can never see them — they need an explicit lookup.
 # ---------------------------------------------------------------------------
-def _resolve_vsnp_sample_dir(step1_dir: Path, sample: str) -> Optional[Path]:
-    """Resolve a sample name to its vSNP step1 subdirectory."""
-    exact = step1_dir / sample
+def _resolve_sample_subdir(base_dir: Path, sample: str) -> Optional[Path]:
+    """Resolve a sample name to its subdirectory under another tool's output root.
+
+    Tolerates the `<sample>_<suffix>` dirs some pipelines produce (vSNP appends a
+    reference/date suffix), preferring an exact match."""
+    exact = base_dir / sample
     if exact.is_dir():
         return exact
     try:
         candidates = sorted(
-            d for d in step1_dir.iterdir()
+            d for d in base_dir.iterdir()
             if d.is_dir() and d.name.startswith(f"{sample}_")
         )
     except (OSError, PermissionError):
@@ -769,7 +777,7 @@ def api_vsnp_sample_files(name: str, sample: str):
     if project_dir is None:
         raise HTTPException(404, f"Project not found: {name}")
     step1_dir = project_dir / "step1"
-    sample_dir = _resolve_vsnp_sample_dir(step1_dir, sample) if step1_dir.is_dir() else None
+    sample_dir = _resolve_sample_subdir(step1_dir, sample) if step1_dir.is_dir() else None
     files: List[Dict] = []
     sample_dir_str = ""
     if sample_dir:
@@ -798,6 +806,60 @@ def api_vsnp_sample_files(name: str, sample: str):
         "step1_dir": sample_dir_str,
         "files": files,
     })
+
+
+def _kraken_krona_path(project_dir: Path, sample: str) -> Optional[Path]:
+    """Newest Krona HTML chart for `sample`, produced by the Kraken ID Parse GUI.
+
+    Kraken writes it under <project>/kraken/<sample>/kraken/<sample>_<ts>_krona.html
+    — note the nested `kraken/` — so an rglob is what actually finds it. Re-runs
+    leave several; the newest is the one worth showing."""
+    kraken_root = project_dir / "kraken"
+    if not kraken_root.is_dir():
+        return None
+    sample_dir = _resolve_sample_subdir(kraken_root, sample)
+    if sample_dir is None:
+        return None
+    try:
+        charts = [p for p in sample_dir.rglob("*_krona.html") if p.is_file()]
+        charts += [p for p in sample_dir.rglob("krona.html") if p.is_file()]
+    except (OSError, PermissionError):
+        return None
+    if not charts:
+        return None
+    return max(charts, key=lambda p: p.stat().st_mtime)
+
+
+@app.get("/api/projects/{name}/kraken/samples")
+def api_kraken_samples(name: str):
+    """Which samples in this project have Kraken output (and a Krona chart)."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    kraken_root = project_dir / "kraken"
+    samples: List[Dict] = []
+    if kraken_root.is_dir():
+        try:
+            for d in sorted(p for p in kraken_root.iterdir() if p.is_dir()):
+                samples.append({
+                    "sample": d.name,
+                    "has_krona": _kraken_krona_path(project_dir, d.name) is not None,
+                })
+        except (OSError, PermissionError):
+            pass
+    return JSONResponse({"project": name, "samples": samples})
+
+
+@app.get("/api/projects/{name}/kraken/samples/{sample}/krona")
+def api_kraken_sample_krona(name: str, sample: str):
+    """Serve the sample's Krona chart inline so it opens as an interactive page."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    krona = _kraken_krona_path(project_dir, sample)
+    if krona is None:
+        raise HTTPException(404, f"No Krona report for {sample}. Run Kraken on it first.")
+    return FileResponse(krona, media_type="text/html")
 
 
 @app.get("/api/projects/{name}/file")

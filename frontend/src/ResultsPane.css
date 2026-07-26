@@ -1,0 +1,100 @@
+/* SHARED COMPONENT — byte-identical across the Kapur Lab tool suite.
+   Source of truth: amr_plus_gui/frontend/src/ResultsPane.css
+
+   Every class is rp- prefixed and App.css is never touched. Two reasons:
+   App.css is copied verbatim between tools and marked "do not restyle", and
+   mhc_gui already defines .qc-badge/.qc-pass/.qc-review/.qc-fail with different
+   meanings — an unprefixed port would silently restyle its genotype table.
+
+   Uses only variables already declared in App.css :root, so this inherits the
+   suite's light/dark themes with no extra work. */
+
+.rp-panel { min-width: 0; }
+
+.rp-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.rp-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.rp-search { flex: 1 1 220px; min-width: 160px; }
+.rp-muted { color: var(--muted); font-size: 12px; }
+
+/* The table scrolls inside its own box: a project with 1000 samples must not
+   make the whole page scroll horizontally. */
+.rp-table-wrap {
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.rp-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.rp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-2);
+  border-bottom: 2px solid var(--border);
+  padding: 8px;
+  text-align: left;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.rp-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.rp-table tbody tr:hover { background: var(--panel); }
+.rp-check { width: 34px; text-align: center; }
+.rp-sample { font-weight: 600; word-break: break-all; }
+.rp-date { white-space: nowrap; }
+.rp-empty { padding: 18px; text-align: center; color: var(--muted); font-style: italic; }
+
+/* Flagged rows get a tint, so a REVIEW is visible while scanning a long list
+   rather than only when you read the chip. */
+.rp-row-review { background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.rp-row-fail   { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+.rp-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.rp-chip-pass   { color: var(--success); border-color: var(--success); }
+.rp-chip-review { color: var(--warning); border-color: var(--warning); }
+.rp-chip-fail   { color: var(--danger);  border-color: var(--danger); }
+.rp-chip-note { font-weight: 400; letter-spacing: 0; opacity: 0.85; text-transform: none; }
+
+.rp-status { font-size: 11px; white-space: nowrap; }
+.rp-status-running { color: var(--accent); }
+.rp-status-done { color: var(--success); }
+.rp-status-none { color: var(--muted); }
+
+.rp-files > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.rp-files-list { display: flex; flex-direction: column; gap: 3px; padding: 6px 0 2px; }
+.rp-file { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.rp-file a { color: var(--accent); text-decoration: none; }
+.rp-file a:hover { text-decoration: underline; }
+.rp-dl { margin-left: auto; }
+/* Sibling-tool output (a Kraken Krona chart, a vSNP step1 dir) — visually
+   distinct because it did NOT come from this tool's run. */
+.rp-cross a { color: var(--accent-2, var(--accent)); }
+
+.rp-scroll-note { margin-top: 6px; font-size: 11px; color: var(--muted); font-style: italic; }
+
+@media (max-width: 780px) {
+  .rp-table-wrap { max-height: 320px; }
+  .rp-search { flex-basis: 100%; }
+}

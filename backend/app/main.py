@@ -31,7 +31,8 @@ from typing import Any, Dict, List, Optional
 
 import aiofiles
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Response,
+                               StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -818,6 +819,257 @@ def api_vsnp_sample_files(name: str, sample: str):
         "step1_dir": sample_dir_str,
         "files": files,
     })
+
+
+# ---------------------------------------------------------------------------
+# The Results pane — every completed sample in one searchable table.
+#
+# Modelled on vSNP's Step 1 Results. The per-sample endpoints below answer "tell
+# me about THIS sample", which is why results were only ever visible by expanding
+# a row in the Projects tree; there was no way to see, sort or search everything
+# that had been run. This endpoint answers "what has this project produced".
+# ---------------------------------------------------------------------------
+_TOOL_SUBDIR = "amr"
+
+
+def _run_finished_at(run_dir: Path) -> str:
+    """When this sample finished, as an ISO string ("" if unknown).
+
+    Prefer the pipeline's own record over filesystem mtimes: a later re-read or
+    an rsync can touch files long after the analysis actually ran."""
+    manifest = run_dir / "run_manifest.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        for key in ("pipeline_finished_at", "finished_at_utc", "finished_at", "timestamp"):
+            val = str(data.get(key) or "").strip()
+            if val:
+                return val
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        newest = max((p.stat().st_mtime for p in run_dir.rglob("*") if p.is_file()),
+                     default=0)
+        if newest:
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(newest, tz=timezone.utc).isoformat()
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def _row_flags(run_dir: Path) -> Dict[str, Any]:
+    """pass / review / fail plus the reasons.
+
+    Two independent signals, and the run's exit status outranks the QC verdict.
+    qc.json only grades the ASSEMBLY, so a sample whose amrfinder step exited
+    non-zero — producing no calls at all — was still reported as "pass". A
+    Results pane that says PASS for a failed run is worse than no pane."""
+    level, reasons = "pass", []
+    try:
+        qc = json.loads((run_dir / "qc.json").read_text(encoding="utf-8"))
+        verdict = str(qc.get("verdict") or "").strip().lower()
+        if verdict in ("fail", "failed"):
+            level = "fail"
+        elif verdict in ("review", "warn", "warning"):
+            level = "review"
+        notes = qc.get("notes") or qc.get("reasons") or []
+        if isinstance(notes, str):
+            notes = [notes]
+        reasons = [str(n) for n in notes if str(n).strip()]
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        man = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        rc = man.get("return_code")
+        if rc not in (None, 0):
+            level = "fail"
+            # Pick the line a human would want. AMRFinderPlus prints a banner,
+            # then "*** ERROR ***", then the real message, then echoes the whole
+            # command line — so "last non-empty line" is the least useful choice.
+            lines = [l.strip() for l in str(man.get("stderr_tail") or "").splitlines()
+                     if l.strip()]
+            detail = ""
+            for i, l in enumerate(lines):
+                if l.startswith("*** ERROR"):
+                    detail = next((x for x in lines[i + 1:]
+                                   if not x.startswith(("Command line:", "Running:"))), "")
+                    break
+            if not detail:
+                detail = next((l for l in lines
+                               if "WARNING" in l or "error" in l.lower()), "")
+            if not detail:
+                detail = next((l for l in reversed(lines)
+                               if not l.startswith(("Command line:", "Running:"))), "")
+            reasons.insert(0, f"AMRFinderPlus exited {rc}"
+                              + (f" — {detail[:120]}" if detail else ""))
+        elif not (run_dir / "amrfinder.tsv").is_file() and (run_dir / "assembly.fasta").is_file():
+            level = "fail" if level == "pass" else level
+            reasons.insert(0, "no amrfinder.tsv — the AMR step produced no calls")
+    except (OSError, ValueError, AttributeError):
+        pass
+    return {"level": level, "reasons": reasons}
+
+
+def _row_metrics(run_dir: Path) -> Dict[str, Any]:
+    """The few numbers worth showing as columns. Missing values stay None so the
+    table renders an em dash rather than inventing a zero."""
+    m: Dict[str, Any] = {"organism": None, "genes": None, "point": None,
+                         "plus": None, "mlst": None}
+    try:
+        org = json.loads((run_dir / "organism_detection.json").read_text(encoding="utf-8"))
+        m["organism"] = org.get("organism_token") or org.get("dominant_species") or None
+        scheme, st = org.get("mlst_scheme"), org.get("mlst_st")
+        if scheme:
+            m["mlst"] = f"{scheme}{f' ST{st}' if st else ''}"
+    except (OSError, ValueError, AttributeError):
+        pass
+    tsv = run_dir / "amrfinder.tsv"
+    if tsv.is_file():
+        try:
+            parsed = _parse_amrfinder_tsv(tsv)
+            s = parsed.get("summary") or {}
+            m["genes"] = s.get("total")
+            m["point"] = s.get("point_mutations")
+            m["plus"] = s.get("plus_count")
+        except Exception:
+            pass
+    return m
+
+
+def _results_rows(name: str, include_all: bool = False) -> List[Dict]:
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    root = project_dir / _TOOL_SUBDIR
+    rows: List[Dict] = []
+    if not root.is_dir():
+        return rows
+    try:
+        entries = sorted(p for p in root.iterdir() if p.is_dir())
+    except (OSError, PermissionError):
+        return rows
+    for d in entries:
+        rows.append({
+            "sample": d.name,
+            "status": _sample_run_status(d),
+            "run_date": _run_finished_at(d),
+            "run_dir": str(d),
+            "flags": _row_flags(d),
+            "metrics": _row_metrics(d),
+            "files": _collect_result_files(d, include_all),
+            "cross_tool": _cross_tool_entries(name, project_dir, d.name),
+        })
+    rows.sort(key=lambda r: (r["run_date"] or "", r["sample"]), reverse=True)
+    return rows
+
+
+def _cross_tool_entries(project: str, project_dir: Path, sample: str) -> List[Dict]:
+    """Sibling tools' outputs for the same sample.
+
+    Every tool builds the same project skeleton, so a sample analysed here may
+    also have a Kraken or vSNP run. Those live outside this tool's run dir, which
+    is exactly why they were invisible in the Results pane."""
+    out: List[Dict] = []
+    if _kraken_krona_path(project_dir, sample) is not None:
+        out.append({
+            "tool": "kraken", "kind": "krona", "label": "📊 Krona",
+            "href": f"./api/projects/{project}/kraken/samples/{sample}/krona",
+        })
+    step1 = project_dir / "step1"
+    if step1.is_dir() and _resolve_sample_subdir(step1, sample) is not None:
+        out.append({
+            "tool": "vsnp", "kind": "step1", "label": "🧬 vSNP Step 1",
+            "href": f"./api/projects/{project}/vsnp/samples/{sample}/files",
+        })
+    return out
+
+
+def _filter_rows(rows: List[Dict], start: str, end: str, q: str) -> List[Dict]:
+    """Apply the pane's filters server-side too, so an export matches the view."""
+    ql = (q or "").strip().lower()
+    out = []
+    for r in rows:
+        if ql and ql not in r["sample"].lower():
+            continue
+        day = (r.get("run_date") or "")[:10]
+        if start and (not day or day < start):
+            continue
+        if end and (not day or day > end):
+            continue
+        out.append(r)
+    return out
+
+
+@app.get("/api/projects/{name}/results")
+def api_project_results(name: str, all: int = Query(0)):
+    return JSONResponse({
+        "project": name,
+        "tool": _TOOL_SUBDIR,
+        "rows": _results_rows(name, include_all=bool(all)),
+    })
+
+
+_EXPORT_COLUMNS = [
+    ("sample", "Sample"), ("status", "Status"), ("run_date", "Run date"),
+    ("qc", "QC"), ("qc_reasons", "QC notes"), ("organism", "Organism"),
+    ("mlst", "MLST"), ("genes", "AMR genes"), ("point", "Point mutations"),
+    ("plus", "Plus elements"), ("run_dir", "Run directory"),
+]
+
+
+def _export_records(name, start, end, q):
+    rows = _filter_rows(_results_rows(name), start, end, q)
+    for r in rows:
+        m = r.get("metrics") or {}
+        yield {
+            "sample": r["sample"], "status": r["status"],
+            "run_date": (r.get("run_date") or "")[:19],
+            "qc": (r.get("flags") or {}).get("level", ""),
+            "qc_reasons": "; ".join((r.get("flags") or {}).get("reasons", [])),
+            "organism": m.get("organism") or "", "mlst": m.get("mlst") or "",
+            "genes": m.get("genes"), "point": m.get("point"), "plus": m.get("plus"),
+            "run_dir": r.get("run_dir", ""),
+        }
+
+
+@app.get("/api/projects/{name}/results.csv")
+def api_project_results_csv(name: str, start: str = Query(""), end: str = Query(""),
+                            q: str = Query("")):
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=[k for k, _ in _EXPORT_COLUMNS], extrasaction="ignore")
+    w.writerow({k: label for k, label in _EXPORT_COLUMNS})
+    for rec in _export_records(name, start, end, q):
+        w.writerow(rec)
+    return Response(
+        content=buf.getvalue(), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{name}_amr_results.csv"'})
+
+
+@app.get("/api/projects/{name}/results.xlsx")
+def api_project_results_xlsx(name: str, start: str = Query(""), end: str = Query(""),
+                             q: str = Query("")):
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        raise HTTPException(501, "Excel export needs openpyxl in this tool's environment.")
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "AMR results"
+    ws.append([label for _, label in _EXPORT_COLUMNS])
+    for rec in _export_records(name, start, end, q):
+        ws.append([rec.get(k) for k, _ in _EXPORT_COLUMNS])
+    for i, (_k, label) in enumerate(_EXPORT_COLUMNS, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = max(12, len(label) + 2)
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{name}_amr_results.xlsx"'})
 
 
 def _kraken_krona_path(project_dir: Path, sample: str) -> Optional[Path]:

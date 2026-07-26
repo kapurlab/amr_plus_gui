@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import "./App.css";
 import ThemeToggle from "./ThemeToggle";
+import ResultsPane from "./ResultsPane";
+import { useResults, useVisibleSelection } from "./useResults";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -57,6 +59,16 @@ function methodClass(method) {
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
+// The tool-specific columns of the shared Results table. Everything else about
+// the pane is identical across the suite.
+const RESULT_COLUMNS = [
+  { key: "organism", label: "Organism" },
+  { key: "mlst", label: "MLST" },
+  { key: "genes", label: "AMR genes", align: "right" },
+  { key: "point", label: "Point mut.", align: "right" },
+  { key: "plus", label: "Plus", align: "right" },
+];
+
 export default function App() {
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -73,6 +85,12 @@ export default function App() {
   const [expanded, setExpanded] = useState({});
   const [samples, setSamples] = useState({});
   const [checkedKeys, setCheckedKeys] = useState({});
+  // Filter for the Projects sample list. Its check-all must act on what this
+  // filter leaves visible, never on the whole project.
+  const [projSampleFilter, setProjSampleFilter] = useState("");
+  // Per-sample detail is opened from the Results table rather than being the
+  // only way to see anything — the table itself is now the landing view.
+  const [showDetail, setShowDetail] = useState(false);
   const [openResults, setOpenResults] = useState({});
   const [sampleResults, setSampleResults] = useState({});  // key -> {loading,status,present,files}
   const [amrTables, setAmrTables] = useState({});          // key -> parsed amr-table
@@ -343,6 +361,11 @@ export default function App() {
     }
   }
 
+  /* Every completed sample for the active project. Refreshed when a run
+     finishes (see streamLogUntilDone) rather than polled — the suite's other
+     panes follow the same "refresh on job transition, never poll" rule. */
+  const results = useResults(activeProject);
+
   const sampleKey = (project, s) => `${project}::${s.sample}`;
   const isActive = (project, s) =>
     activeRun && activeRun.project === project && activeRun.sample === s.sample;
@@ -353,6 +376,36 @@ export default function App() {
       const next = { ...m };
       if (next[key]) delete next[key];
       else next[key] = { project, ...s };
+      return next;
+    });
+  }
+
+  /* Samples currently VISIBLE in a project, i.e. after the filter box. The
+     check-all below must use this and nothing else: a "select all" that also
+     queues samples the user cannot see is how people accidentally run 900
+     samples instead of the 3 they filtered to. */
+  function visibleSamples(project) {
+    const q = projSampleFilter.trim().toLowerCase();
+    const list = samples[project] || [];
+    return q ? list.filter((s) => String(s.sample || "").toLowerCase().includes(q)) : list;
+  }
+
+  function checkAllState(project) {
+    const vis = visibleSamples(project);
+    const on = vis.filter((s) => checkedKeys[sampleKey(project, s)]).length;
+    return { total: vis.length, on, checked: vis.length > 0 && on === vis.length,
+             indeterminate: on > 0 && on < vis.length };
+  }
+
+  function toggleCheckAllVisible(project, checked) {
+    const vis = visibleSamples(project);
+    setCheckedKeys((m) => {
+      const next = { ...m };
+      vis.forEach((s) => {
+        const k = sampleKey(project, s);
+        if (checked) next[k] = { project, ...s };
+        else delete next[k];
+      });
       return next;
     });
   }
@@ -484,6 +537,9 @@ export default function App() {
               loadAmrTable(samp.project, samp);
             }
             loadProjects();
+            // The Results table is the place people now look for finished work,
+            // so it has to reflect the run that just ended.
+            results.reload();
           })
           .catch(() => {})
           .finally(() => done());
@@ -775,7 +831,29 @@ export default function App() {
                             No FASTQ/assembly files yet — add some from the <strong>Inputs</strong> pane on the right.
                           </div>
                         )}
-                        {samples[proj.name]?.map((s) => {
+                        {(samples[proj.name] || []).length > 0 && (
+                          <div className="sample-item" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <input
+                              type="checkbox"
+                              ref={(el) => { if (el) el.indeterminate = checkAllState(proj.name).indeterminate; }}
+                              checked={checkAllState(proj.name).checked}
+                              disabled={!visibleSamples(proj.name).length}
+                              onChange={(e) => toggleCheckAllVisible(proj.name, e.target.checked)}
+                              title="Select / deselect every sample shown here (honours the filter)"
+                            />
+                            <span className="muted" style={{ fontSize: 11 }}>
+                              {checkAllState(proj.name).on} of {checkAllState(proj.name).total} selected for run
+                            </span>
+                            <input
+                              type="search"
+                              placeholder="Filter samples…"
+                              value={projSampleFilter}
+                              onChange={(e) => setProjSampleFilter(e.target.value)}
+                              style={{ flex: "1 1 140px", minWidth: 120, fontSize: 12 }}
+                            />
+                          </div>
+                        )}
+                        {visibleSamples(proj.name).map((s) => {
                           const key = sampleKey(proj.name, s);
                           const res = sampleResults[key];
                           const hasRun = proj.amr_runs?.includes(s.sample);
@@ -1064,7 +1142,7 @@ export default function App() {
           </button>
         </div>
         {showRun && (
-          <div className="row-grid row-grid-split">
+          <div className="row-grid row-grid-single">
             {/* LEFT — configure & run */}
             <section className="panel">
               <h2>Configure &amp; Run</h2>
@@ -1176,10 +1254,24 @@ export default function App() {
               )}
             </section>
 
-            {/* RIGHT — current run status */}
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════════════ */}
+        {/* SECTION: Results                                         */}
+        {/* ════════════════════════════════════════════════════════ */}
+        <div className="row-header">
+          <h2>Results</h2>
+          <button className="ghost" onClick={() => setShowResults(!showResults)}>
+            {showResults ? "Hide" : "Show"}
+          </button>
+        </div>
+        {showResults && (
+          <div className="row-grid row-grid-split">
+            {/* LEFT — Current Run (live status for the batch in flight) */}
             <section className="panel">
               <div className="panel-header">
-                <h2>Current run</h2>
+                <h2>Current Run</h2>
                 {jobId && <span className="muted" style={{ fontSize: 12 }}>job {jobId.slice(0, 8)}</span>}
               </div>
               {activeRun ? (
@@ -1194,28 +1286,34 @@ export default function App() {
                   </div>
                   {currentStep && <div className="muted" style={{ marginTop: 4 }}>{currentStep}</div>}
                   <div className="note" style={{ marginTop: 8 }}>
-                    Files appear inline under each sample on the left; the parsed resistance table is in the Results section below.
+                    Completed samples appear in the Results table to the right, with their files.
                   </div>
                 </div>
               ) : (
                 <div className="empty-msg">
-                  No active run. Select samples, set options, and Run. Results for any sample are shown below.
+                  No active run. Completed samples are listed in the Results table to the right.
                 </div>
               )}
             </section>
+
+            {/* RIGHT — every completed sample, searchable (vSNP Step 1 model) */}
+            <ResultsPane
+              project={activeProject}
+              results={results}
+              columns={RESULT_COLUMNS}
+              onDetail={(row) => {
+                const key = `${activeProject}::${row.sample}`;
+                setSelectedResultKey(key);
+                if (!sampleResults[key]) loadSampleResults(activeProject, { sample: row.sample });
+                if (!amrTables[key]) loadAmrTable(activeProject, { sample: row.sample });
+                setShowDetail(true);
+              }}
+            />
           </div>
         )}
 
-        {/* ════════════════════════════════════════════════════════ */}
-        {/* SECTION: Results                                         */}
-        {/* ════════════════════════════════════════════════════════ */}
-        <div className="row-header">
-          <h2>Results</h2>
-          <button className="ghost" onClick={() => setShowResults(!showResults)}>
-            {showResults ? "Hide" : "Show"}
-          </button>
-        </div>
-        {showResults && (
+        {/* Per-sample detail, opened from the Results table's Detail button. */}
+        {showResults && showDetail && (
           <div className="row-grid row-grid-single">
             <section className="panel">
               {!resTable ? (

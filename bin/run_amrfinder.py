@@ -89,7 +89,6 @@ def build_amrfinder_command(
         "-n", str(assembly),            # nucleotide input (assembly)
         "--name", name,                 # leading `name` column
         "-o", str(outdir / "amrfinder.tsv"),
-        "--mutation_all", str(outdir / "mutation_all.tsv"),  # negative findings
         "--print_node",                 # adds Hierarchy node column
         "--threads", str(threads),
         "--coverage_min", str(coverage_min),
@@ -97,6 +96,14 @@ def build_amrfinder_command(
     ]
     if organism:
         cmd += ["-O", organism]
+        # --mutation_all reports point mutations, which are only defined PER
+        # ORGANISM. AMRFinderPlus warns and then exits NON-ZERO when it is given
+        # without -O, so passing it unconditionally meant every sample whose
+        # organism could not be auto-detected failed outright — no amrfinder.tsv,
+        # no calls — while the GUI still showed a green "results" badge.
+        # Acquired-gene detection needs no organism, so the run is perfectly
+        # valid without this flag; only the point-mutation report is unavailable.
+        cmd += ["--mutation_all", str(outdir / "mutation_all.tsv")]
     if use_plus:
         cmd += ["--plus"]
     # Only pin -d when the path is a *real* AMRFinderPlus DB. A configured-but-
@@ -112,21 +119,74 @@ def build_amrfinder_command(
     return cmd
 
 
-def _is_valid_amrfinder_db(path: str) -> bool:
-    """True if `path` (a dir or symlink to one) holds an AMRFinderPlus DB.
+def _binary_major() -> Optional[int]:
+    """Major version of the installed amrfinder binary (None if unknown).
 
-    A built DB dir carries a version stamp plus the indexed reference files;
-    checking for the version file + an AMRProt index is enough to distinguish a
-    real DB from a missing/empty path."""
+    Scans the WHOLE output, not just the first line: amrfinder prints a
+    "Running: <path>" banner before "Software version: 3.12.8", so taking
+    line 0 (as _tool_version does) yields a path and no version at all."""
+    for args, pattern in ((["amrfinder", "--version"], r"^\s*(\d+)\.\d+"),
+                          (["amrfinder", "-V"], r"version[:\s]+(\d+)\.\d+")):
+        try:
+            proc = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            continue
+        out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        for line in out.splitlines():
+            m = re.search(pattern, line.strip(), re.IGNORECASE)
+            if m:
+                return int(m.group(1))
+    return None
+
+
+def _db_format_major(d: Path) -> Optional[int]:
+    """Major of the DB's `database_format_version.txt` (None if absent)."""
+    try:
+        raw = (d / "database_format_version.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    m = re.match(r"(\d+)\.", raw + ".")
+    return int(m.group(1)) if m else None
+
+
+def _is_valid_amrfinder_db(path: str) -> bool:
+    """True if `path` holds an AMRFinderPlus DB THIS binary can actually read.
+
+    Presence is not enough. AMRFinderPlus 4.x renamed the reference files
+    (AMRProt -> AMRProt.fa) and bumped database_format_version to 4.x; a 3.x
+    binary handed a 4.x database aborts with the thoroughly misleading
+    "The BLAST database for AMRProt was not found. Use amrfinder -u to download"
+    — which sends you off to re-download a database that is already there and
+    already correct. Checking the format up front lets us say what is really
+    wrong, and lets the caller fall back to the env's own bundled DB."""
     try:
         d = Path(path).resolve()
     except OSError:
         return False
     if not d.is_dir():
         return False
-    has_version = (d / "version.txt").is_file()
-    has_refs = any(d.glob("AMRProt*")) or any(d.glob("AMR_CDS*"))
-    return has_version and has_refs
+    if not (d / "version.txt").is_file():
+        return False
+    if not (any(d.glob("AMRProt*")) or any(d.glob("AMR_CDS*"))):
+        return False
+    db_major, bin_major = _db_format_major(d), _binary_major()
+    if db_major is not None and bin_major is not None and db_major != bin_major:
+        db_ver = ""
+        try:
+            db_ver = (d / "version.txt").read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+        print(
+            f"ERROR: AMRFinderPlus database at {d} is format {db_major}.x "
+            f"(database version {db_ver}), but the installed amrfinder is "
+            f"{bin_major}.x and can only read format {bin_major}.x databases.\n"
+            f"       Nothing is corrupt and re-downloading will NOT help. Fix one side:\n"
+            f"         • upgrade the tool:  conda install -n amr_plus 'ncbi-amrfinderplus>={db_major}'\n"
+            f"         • or install a matching database:  amrfinder -u -d <dir>\n"
+            f"       Continuing without -d; amrfinder will look for its own bundled database.",
+            file=sys.stderr, flush=True)
+        return False
+    return True
 
 
 def run(
@@ -187,7 +247,7 @@ def run(
             "threads": threads,
             "ident_min": ident_min,
             "coverage_min": coverage_min,
-            "mutation_all": True,
+            "mutation_all": bool(organism),
             "print_node": True,
             "amrfinder_db": amrfinder_db,
             "input_mode": "nucleotide (-n)",

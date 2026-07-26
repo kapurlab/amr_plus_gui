@@ -18,24 +18,19 @@ CONFIG_PATH = DATA_DIR / "config.json"
 # normally does not — only a lab server or an OOD site. Never assume a path:
 # probe in order of authority and fall back to None (no shared root) rather than
 # a fictional one, so macOS/WSL users aren't shown a directory that cannot exist.
-#   1. BDTOOLS_SHARED_PROJECTS_ROOT — set by a site deployment or the launcher.
-#      An explicitly empty value is authoritative: it DISABLES the shared root.
+#   1. BDTOOLS_SHARED_PROJECTS_ROOT — exported by the launcher, which resolved it
+#      from the machine's recorded site config. An explicitly empty value is
+#      authoritative: it DISABLES the shared root.
 #   2. the user's own `shared_projects_root` setting — see shared_projects_root()
-#   3. the historical lab-server path, LAST, so existing servers keep working
-_LEGACY_SHARED_PROJECTS_ROOT = Path("/srv/kapurlab/projects")
+# There is no step 3. A site supplies its own value (bdtools records it in
+# <BDTOOLS_HOME>/site.conf); this file contains no path of its own, so the same
+# release is correct on macOS, WSL, Linux and OOD without editing.
 _ENV_SHARED_PROJECTS_ROOT = "BDTOOLS_SHARED_PROJECTS_ROOT"
 
 
 def _default_shared_projects_root() -> str:
     env = os.environ.get(_ENV_SHARED_PROJECTS_ROOT)
-    if env is not None:
-        return env.strip()
-    try:
-        if _LEGACY_SHARED_PROJECTS_ROOT.is_dir():
-            return str(_LEGACY_SHARED_PROJECTS_ROOT)
-    except OSError:
-        pass
-    return ""
+    return env.strip() if env is not None else ""
 
 
 _DEFAULT_SHARED_PROJECTS_ROOT = _default_shared_projects_root()
@@ -70,7 +65,7 @@ def _first_existing(*paths: str) -> str:
 
     Returns "" — not the first candidate — when none exist. A candidate that
     doesn't exist is not a useful default: on macOS or WSL it put a Linux server
-    path like /srv/kapurlab/databases/... into Settings, which reads as "already
+    path from another deployment into Settings, which reads as "already
     configured" while pointing at a directory that can never be there. Empty is
     honest, and the GUI already renders it as "not configured".
 
@@ -107,12 +102,8 @@ def _db_root() -> Path:
             return Path(recorded)
     except OSError:
         pass
-    for cand in (Path.home() / "databases", Path("/srv/kapurlab/databases")):
-        try:
-            if cand.is_dir():
-                return cand
-        except OSError:
-            continue
+    # No site literal here either: an unconfigured machine gets a per-user
+    # directory, and `bdtools setup-databases` records the real answer.
     return Path.home() / "databases"
 
 
@@ -124,8 +115,6 @@ _DB_ROOT = _db_root()
 _KRAKEN_DB_DEFAULT = _first_existing(
     str(_DB_ROOT / "kraken2" / "k2_standard_pluspf"),
     str(_DB_ROOT / "kraken2" / "k2_standard_08gb"),
-    "/srv/kapurlab/databases/kraken2/k2_standard_pluspf",   # legacy server layout
-    "/srv/kapurlab/databases/kraken2/k2_standard_08gb",
 )
 
 # AMRFinderPlus database directory. Empty by default — `amrfinder` finds its
@@ -133,7 +122,6 @@ _KRAKEN_DB_DEFAULT = _first_existing(
 # set it explicitly only to pin a specific DB version.
 _AMRFINDER_DB_DEFAULT = _first_existing(
     str(_DB_ROOT / "amrfinderplus" / "latest"),
-    "/srv/kapurlab/databases/amrfinderplus/latest",         # legacy server layout
 )
 
 DEFAULTS: Dict[str, Any] = {

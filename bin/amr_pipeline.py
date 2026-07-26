@@ -95,16 +95,16 @@ import run_amrfinder
 def _sibling_tool_dir(name: str) -> Path:
     """Where a sibling suite tool is installed, on ANY platform.
 
-    Resolved, never assumed. A fixed "/srv/kapurlab/tools/<name>" is correct only
-    on the original lab server; on macOS, WSL and per-user Linux installs the
-    checkouts live under <BDTOOLS_HOME>/checkouts, and at another site anywhere
-    else. Getting this wrong fails SILENTLY — the caller just logs "not found"
-    and skips the MLST cross-check — so probe in order of authority:
+    Resolved, never assumed. A baked-in site path is correct only on the machine
+    it was written for; on macOS, WSL and per-user Linux installs the checkouts
+    live under <BDTOOLS_HOME>/checkouts, and at another site anywhere else.
+    Getting this wrong fails SILENTLY — the caller just logs "not found" and skips
+    the MLST cross-check — so probe in order of authority, with no literal:
 
       1. BDTOOLS_TOOLS_ROOT — exported by the launcher, which already resolved it
+         (from the machine's recorded site config, if it has one)
       2. our own parent dir — true whenever tools are checked out side by side
       3. <BDTOOLS_HOME>/checkouts — the documented per-user install location
-      4. the historical lab-server path, LAST, so existing servers keep working
 
     Returns the first candidate that exists, else the first candidate, so a
     "not found at ..." message names somewhere plausible for this machine."""
@@ -118,7 +118,6 @@ def _sibling_tool_dir(name: str) -> Path:
         xdg = os.environ.get("XDG_DATA_HOME", "").strip()
         home = str(Path(xdg) / "bdtools") if xdg else str(Path.home() / ".local/share/bdtools")
     candidates.append(Path(home) / "checkouts" / name)
-    candidates.append(Path("/srv/kapurlab/tools") / name)
     for c in candidates:
         try:
             if c.is_dir():

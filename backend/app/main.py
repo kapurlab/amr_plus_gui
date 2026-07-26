@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # Paths
 # ---------------------------------------------------------------------------
 _HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parent.parent          # /srv/kapurlab/tools/amr_plus_gui
+_REPO_ROOT = _HERE.parent.parent          # this tool's checkout, wherever it is
 _BIN_DIR = _REPO_ROOT / "bin"
 _CONFIG_DIR = _REPO_ROOT / "config"
 _FRONTEND_DIST = _REPO_ROOT / "frontend" / "dist"
@@ -174,8 +174,9 @@ def _get_project_dir(name: str) -> Optional[Path]:
 #
 # A project created here uses the SAME on-disk skeleton vSNP/Kraken GUIs
 # create, so a project made in AMRFinderPlus GUI is immediately usable in the
-# siblings (and vice versa) — all tools share /srv/kapurlab/projects and
-# per-user ~/projects and list whatever is on disk. We add the amr/ subdir up
+# siblings (and vice versa) — all tools resolve the same shared-projects root
+# (see config.shared_projects_root) plus the user's own, and list whatever is
+# on disk. We add the amr/ subdir up
 # front so the sample browser and results endpoints have a stable layout.
 # ---------------------------------------------------------------------------
 _PROJECT_NAME_OK_CHARSET = re.compile(r"^[A-Za-z0-9._-]+$")

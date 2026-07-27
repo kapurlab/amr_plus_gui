@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import "./App.css";
 import ThemeToggle from "./ThemeToggle";
+import CitationFooter from "./Citations";
 import ResultsPane from "./ResultsPane";
 import { useResults, useVisibleSelection } from "./useResults";
 
@@ -1510,6 +1511,8 @@ export default function App() {
           </div>
         )}
       </main>
+
+      <CitationFooter tool="amr_plus_gui" />
 
       {folderBrowser.open && (
         <div

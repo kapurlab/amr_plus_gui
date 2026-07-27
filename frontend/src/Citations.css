@@ -1,0 +1,120 @@
+/* SHARED STYLESHEET — byte-identical across the Kapur Lab tool suite.
+   Source of truth: amr_plus_gui/frontend/src/Citations.css
+   Verify with bin/check-shared-frontend.sh in the umbrella.
+
+   Every class is `cite-` prefixed and this file never touches App.css or
+   styles.css. Two reasons: App.css is copied verbatim between tools and marked
+   do-not-restyle, and vsnp_gui runs on a different stylesheet entirely
+   (styles.css) — a self-contained, prefixed sheet is what lets the same footer
+   drop into both without restyling either.
+
+   Only CSS variables that exist in BOTH App.css and vsnp_gui's styles.css are
+   used (--panel, --panel-2, --border, --muted, --text, --accent), each with a
+   literal fallback so the footer still reads correctly if a tool is missing one. */
+
+.cite-footer {
+  margin: 28px auto 0;
+  padding: 18px 20px 22px;
+  max-width: 1400px;
+  border-top: 1px solid var(--border, #ddd);
+  background: var(--panel, transparent);
+  color: var(--text, #222);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.cite-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cite-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+/* Rides on the host tool's own `.ghost` button styling where it exists; the
+   declarations here are only what a bare button needs to not look broken. */
+.cite-copy {
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.cite-intro {
+  margin: 6px 0 12px;
+  color: var(--muted, #666);
+  max-width: 70ch;
+}
+
+.cite-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cite-item {
+  display: grid;
+  /* Label column sized to the longest label; reference text takes the rest. */
+  grid-template-columns: minmax(7rem, max-content) 1fr auto;
+  gap: 4px 14px;
+  align-items: baseline;
+  padding: 9px 12px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(127, 127, 127, 0.06));
+}
+
+.cite-label {
+  font-weight: 650;
+  color: var(--accent, #2a6ebb);
+  white-space: nowrap;
+}
+
+/* Selectable as one block so a user can drag-copy a single reference. */
+.cite-text {
+  /* Reference strings contain long DOIs and URLs that must not force the page
+     into a horizontal scroll. */
+  overflow-wrap: anywhere;
+}
+
+.cite-link {
+  white-space: nowrap;
+  font-size: 0.78rem;
+  color: var(--accent, #2a6ebb);
+  text-decoration: none;
+}
+
+.cite-link:hover {
+  text-decoration: underline;
+}
+
+/* On narrow screens the three-column grid collapses to stacked rows — a 60ch
+   reference in a 1fr column beside a label is unreadable on a phone. */
+@media (max-width: 720px) {
+  .cite-item {
+    grid-template-columns: 1fr;
+  }
+  .cite-link {
+    justify-self: start;
+  }
+}
+
+@media print {
+  /* The footer is the reason someone prints the page — keep it, and drop the
+     interactive affordances that mean nothing on paper. */
+  .cite-copy {
+    display: none;
+  }
+  .cite-footer {
+    break-inside: avoid;
+  }
+}

@@ -98,3 +98,29 @@
   .rp-table-wrap { max-height: 320px; }
   .rp-search { flex-basis: 100%; }
 }
+
+/* Opt-in clickable rows (onRowSelect). Only these two classes are new; a tool that
+   does not pass onRowSelect never gets them, so its table is unchanged. */
+.rp-row-selectable { cursor: pointer; }
+
+.rp-row-selectable:hover {
+  background: var(--panel-2, rgba(127, 127, 127, 0.08));
+}
+
+/* Focus ring for keyboard users, since the row is now tabbable. */
+.rp-row-selectable:focus-visible {
+  outline: 2px solid var(--accent, #2a6ebb);
+  outline-offset: -2px;
+}
+
+/* The selected row needs to read as selected next to the QC chip colours, so mark
+   it with an accent edge rather than a background tint that would fight them. */
+.rp-row-selected,
+.rp-row-selectable.rp-row-selected:hover {
+  background: var(--panel-2, rgba(42, 110, 187, 0.10));
+  box-shadow: inset 3px 0 0 var(--accent, #2a6ebb);
+}
+
+/* Keep the timestamp on one line — the column is narrow and a wrapped time reads
+   like two separate values. */
+.rp-date { white-space: nowrap; }

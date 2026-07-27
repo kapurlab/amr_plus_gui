@@ -8,10 +8,62 @@
    the "showing N of M" count, the check-all and the exports can never disagree. */
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+/** Local calendar day of a Date, as YYYY-MM-DD.
+ *
+ * NOT toISOString().slice(0,10) — that is the UTC day, so "Today" meant the UTC
+ * today. West of Greenwich an evening run already belonged to tomorrow's filter.
+ * The table shows local time (see fmtRunDate), so the filter must agree or a run
+ * displays one date and is filtered under another. */
 export const isoDay = (d) => {
   const x = new Date(d);
-  return isNaN(x) ? "" : x.toISOString().slice(0, 10);
+  if (isNaN(x)) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`;
 };
+
+/** Backend timestamp -> Date, or null when there is no usable time.
+ *
+ * A naive string ("2026-07-27T10:36:40") is what JS already treats as local, which
+ * is what the backends mean. A string carrying Z or an offset is converted to local
+ * so the table shows the wall-clock time the run actually happened for whoever is
+ * reading it — matching the local timestamp in the run's own folder name.
+ *
+ * A DATE-ONLY value returns null on purpose: `new Date("2026-07-27")` parses as UTC
+ * midnight, which west of Greenwich renders as 18:00 the PREVIOUS DAY. Showing the
+ * wrong date is worse than showing no time. */
+export function parseRunDate(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s.includes("T") ? s : s.replace(" ", "T"));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** The local day a row belongs to, for date filtering. Falls back to the leading
+ *  10 characters when there is no parseable time (date-only, or unrecognised). */
+export function runDay(value) {
+  const d = parseRunDate(value);
+  return d ? isoDay(d) : String(value || "").trim().slice(0, 10);
+}
+
+/** Run timestamp for display: "2026-07-27_07-10-52".
+ *
+ * Deliberately the same shape the pipelines already stamp into run labels and
+ * output filenames (ksnp_20260727_074433,
+ * <label>_2026-07-27_10-45-27_stats.xlsx), so a row in this table can be matched
+ * to a folder or a spreadsheet by eye. Seconds are kept for the same reason —
+ * two runs of one set can land in the same minute.
+ *
+ * The time was previously discarded by slicing to 10 characters, which made
+ * several runs of the same set on one day indistinguishable — precisely when you
+ * need to tell them apart. Date-only values render as the bare date rather than
+ * inventing 00-00-00. */
+export function fmtRunDate(value) {
+  const d = parseRunDate(value);
+  if (!d) return String(value || "").trim().slice(0, 10) || "—";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${isoDay(d)}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
 
 export const levelOf = (row) => (row?.flags?.level || "pass").toLowerCase();
 export const reasonsOf = (row) => row?.flags?.reasons || [];
@@ -54,7 +106,7 @@ export function useResults(project, { path = "results", auto = true } = {}) {
     return rows.filter((r) => {
       if (q && !String(r.sample || "").toLowerCase().includes(q)) return false;
       if (flaggedOnly && !isFlagged(r)) return false;
-      const day = String(r.run_date || "").slice(0, 10);
+      const day = runDay(r.run_date);
       if (dateStart && (!day || day < dateStart)) return false;
       if (dateEnd && (!day || day > dateEnd)) return false;
       return true;

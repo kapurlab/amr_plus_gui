@@ -8,7 +8,7 @@
    whichever one you last clicked. Per-tool differences arrive as props (columns,
    rowActions, labels), so the table itself stays identical everywhere. */
 import React, { useState } from "react";
-import { levelOf, reasonsOf, summarizeReason } from "./useResults";
+import { levelOf, reasonsOf, summarizeReason, fmtRunDate } from "./useResults";
 import "./ResultsPane.css";
 
 const LEVEL_TEXT = { pass: "PASS", review: "REVIEW", fail: "FAIL" };
@@ -82,6 +82,13 @@ export default function ResultsPane({
   onDetail = null,
   labels = {},
   title = "Results",
+  // Opt-in row selection. When onRowSelect is given, clicking anywhere on a row
+  // (outside the checkbox / Files / action controls) calls it, and the row matching
+  // selectedKey is highlighted — so a tool can drive its own detail pane below the
+  // table, the way irma_gui and ksnp_gui already do from their Projects lists.
+  // Omitted by default, so tools that don't pass it are visually unchanged.
+  onRowSelect = null,
+  selectedKey = null,
 }) {
   const [openFilesRow, setOpenFilesRow] = useState(null);
   const entity = labels.entity || "sample";
@@ -152,7 +159,7 @@ export default function ResultsPane({
               <th>QC</th>
               <th>{labels.sampleHeader || "Sample"}</th>
               <th>Status</th>
-              <th>Run date</th>
+              <th>{labels.dateHeader || "Run date / time"}</th>
               <th>Files</th>
               {columns.map((c) => <th key={c.key} style={{ textAlign: c.align || "left" }}>{c.label}</th>)}
               {onDetail && <th />}
@@ -170,8 +177,33 @@ export default function ResultsPane({
             )}
             {visibleRows.map((row) => {
               const key = row.run_dir || row.sample;
+              const selectable = Boolean(onRowSelect);
               return (
-                <tr key={key} className={`rp-row rp-row-${levelOf(row)}`}>
+                <tr
+                  key={key}
+                  className={`rp-row rp-row-${levelOf(row)}`
+                    + (selectable ? " rp-row-selectable" : "")
+                    + (selectedKey && selectedKey === key ? " rp-row-selected" : "")}
+                  // Row click, not cell click, so the whole row is a target — but
+                  // only when the click did not land on a control. Without this
+                  // guard, ticking a checkbox or opening Files would also change
+                  // the selection underneath the user.
+                  onClick={selectable ? (e) => {
+                    if (e.target.closest("input, button, a, summary, details, label")) return;
+                    onRowSelect(row);
+                  } : undefined}
+                  // Keyboard parity: a clickable row must be reachable and
+                  // activatable without a mouse.
+                  tabIndex={selectable ? 0 : undefined}
+                  onKeyDown={selectable ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      if (e.target.closest("input, button, a, summary, details, label")) return;
+                      e.preventDefault();
+                      onRowSelect(row);
+                    }
+                  } : undefined}
+                  aria-selected={selectable ? (selectedKey === key) : undefined}
+                >
                   {selection && (
                     <td className="rp-check">
                       <input type="checkbox" checked={selection.isSelected(row)}
@@ -186,7 +218,7 @@ export default function ResultsPane({
                         : row.status === "done" ? "✓ done" : "not run"}
                     </span>
                   </td>
-                  <td className="rp-date">{(row.run_date || "").slice(0, 10) || "—"}</td>
+                  <td className="rp-date">{fmtRunDate(row.run_date)}</td>
                   <td>
                     <FilesCell row={row} project={project} open={openFilesRow === key}
                                onToggle={() => setOpenFilesRow(openFilesRow === key ? null : key)} />

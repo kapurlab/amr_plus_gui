@@ -127,7 +127,43 @@ def _sibling_tool_dir(name: str) -> Path:
     return candidates[0]
 
 
+def _sibling_env_dir(name: str, tool_dir: Path):
+    """The conda env that provides a sibling tool's software, or None.
+
+    _sibling_tool_dir finds the sibling's SCRIPTS; this finds the environment those
+    scripts were solved for, which is the half that was missing. Running a sibling's
+    runner under our own interpreter and PATH means the binaries IT shells out to
+    (mlst -> blastn, any2fasta) still come from this env — so the software has to be
+    duplicated here, and then one shared solve caps every version in it. mlst is the
+    worked example: it pulls perl-bioperl -> perl-bio-samtools, holding perl and zlib
+    down, which capped ncbi-amrfinderplus in this env at 3.12.8 — a version that
+    cannot read the AMRFinder database now deployed (4.x renamed AMRProt to
+    AMRProt.fa).
+
+    BDTOOLS_SIBLING_ENV_<TOOL> is exported by the launcher, which resolved it the
+    same way it resolves the env for the tool it is starting (a shared sibling env
+    and a personal conda env both win over <checkout>/env, so this cannot be
+    guessed). Fall back to <checkout>/env, which is the per-user layout.
+    """
+    explicit = os.environ.get("BDTOOLS_SIBLING_ENV_" + name.upper(), "").strip()
+    for cand in (Path(explicit) if explicit else None, tool_dir / "env"):
+        if cand is not None and (cand / "bin").is_dir():
+            return cand
+    return None
+
+
+def _env_for_sibling(env_dir: Optional[Path]) -> Optional[dict]:
+    """This environment, with a sibling env's bin FIRST on PATH."""
+    if env_dir is None:
+        return None
+    env = dict(os.environ)
+    env["PATH"] = f"{env_dir / 'bin'}{os.pathsep}{env.get('PATH', '')}"
+    env["CONDA_PREFIX"] = str(env_dir)
+    return env
+
+
 _MLST_GUI = _sibling_tool_dir("mlst_gui")
+_MLST_ENV = _sibling_env_dir("mlst_gui", _MLST_GUI)
 _GENOME_SIZES = _CONFIG_DIR / "genome_sizes.yaml"
 
 
@@ -365,8 +401,16 @@ def run_mlst(assembly: Path, outdir: Path, sample: str) -> Optional[Path]:
     out_json = outdir / "mlst_result.json"
     runner = _MLST_GUI / "bin" / "mlst_pipeline.py"
     if runner.is_file():
-        rc = _run([sys.executable, str(runner), "--assembly", str(assembly),
-                   "--outdir", str(outdir), "--label", sample])
+        # Its own python and its own bin on PATH. sys.executable here would run
+        # mlst_gui's script against OUR interpreter and OUR blast, which is what
+        # forced a duplicate mlst into this environment — see _sibling_env_dir.
+        py = str(_MLST_ENV / "bin" / "python") if _MLST_ENV else sys.executable
+        if not Path(py).is_file():
+            py = sys.executable
+        log(f"MLST via sibling mlst_gui (env: {_MLST_ENV or 'this env'})")
+        rc = _run([py, str(runner), "--assembly", str(assembly),
+                   "--outdir", str(outdir), "--label", sample],
+                  env=_env_for_sibling(_MLST_ENV))
         if rc == 0 and out_json.is_file():
             return out_json
         log(f"WARNING: mlst_gui runner did not produce mlst_result.json (rc={rc}).")

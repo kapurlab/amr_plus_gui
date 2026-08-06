@@ -26,7 +26,13 @@ dependencies:
 
   # AMR / organism-resolution toolchain
   - ncbi-amrfinderplus   # AMRFinderPlus + StxTyper
-  - mlst                 # MLST corroboration (PubMLST schemes)
+  # NOT mlst: it runs from mlst_gui's own env (see bin/amr_pipeline.py,
+  # _sibling_env_dir). A second copy here pulled perl-bioperl ->
+  # perl-bio-samtools, which holds perl and zlib down and capped
+  # ncbi-amrfinderplus at 3.12.8 — a version that cannot read the AMRFinder
+  # database now deployed, since 4.x renamed AMRProt to AMRProt.fa. Removing it
+  # lets this env take AMRFinderPlus 4.2.7 and kraken2 2.17.1, verified
+  # installable on linux-64, osx-64 and osx-arm64.
   - kraken2              # organism detection from reads
   - krakentools
   - shovill              # preferred assembler

@@ -77,7 +77,7 @@ Then adapt, in order:
    `DEFAULTS` (DB paths, projects roots) — keep all site paths here / in env vars.
 5. Write `backend/app/main.py` routes (clone the sibling; swap `kraken`/`amr`),
    the `bin/` pipeline, `conda_setup/environment.yml`, `deploy/install.sh`,
-   `frontend/src/App.jsx`, manifests, README, CLAUDE.md.
+   `frontend/src/App.jsx`, manifests, README.
 6. `git init`; work on a feature branch (`feature/initial-build`); never commit
    `node_modules`/`dist`/`env` (see §9).
 

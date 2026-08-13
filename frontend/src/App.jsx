@@ -8,7 +8,10 @@ import { useResults, useVisibleSelection } from "./useResults";
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const APP_VERSION = "0.1.0";
+// Fallback ONLY: the header shows the backend-reported version (git
+// describe — the same string the Diagnostic Tools Dashboard shows) and
+// uses this constant just until that arrives / on installs without git.
+const APP_VERSION = "0.3.4";
 
 // AMRFinderPlus --organism tokens are loaded at runtime from
 // /api/organism-options (cached `amrfinder -l`). This fallback is only used if
@@ -116,6 +119,9 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState({});
   const [folderBrowser, setFolderBrowser] = useState({ open: false, path: "", parent: null, entries: [], loading: false, error: "" });
   const [currentStep, setCurrentStep] = useState("");
+  // Version of the deployed checkout as reported by the backend (git
+  // describe — the same string the Diagnostic Tools Dashboard shows).
+  const [serverVersion, setServerVersion] = useState("");
 
   const [showSettings, setShowSettings] = useState(false);
   const [showProjects, setShowProjects] = useState(true);
@@ -137,6 +143,7 @@ export default function App() {
         setKrakenDb(cfg.kraken_db || "");
         setAmrfinderDb(cfg.amrfinder_db || "");
         setSettingsDraft(cfg);
+        setServerVersion(cfg.app_version || "");
       })
       .catch(() => {});
     fetch("./api/organism-options")
@@ -656,7 +663,7 @@ export default function App() {
           <img className="app-logo" src="./amr_icon.svg" alt="Antimicrobial resistance shield icon" />
           <div>
             <h1>
-              AMRFinderPlus <span className="version-tag">v{APP_VERSION}</span>
+              AMRFinderPlus <span className="version-tag">{serverVersion || `v${APP_VERSION}`}</span>
             </h1>
             <p>Antimicrobial resistance, virulence &amp; stress gene detection with conservative organism resolution</p>
           </div>

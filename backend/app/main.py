@@ -36,7 +36,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Respons
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .config import load_config, save_config, shared_projects_root
+from .config import DEFAULTS, load_config, save_config, shared_projects_root
 from .jobs import JobManager
 from .request_safety import install_request_safety
 from .sra import (
@@ -1254,6 +1254,73 @@ def api_organism_options(refresh: int = Query(0)):
         "ts": now,
     })
     return JSONResponse(result)
+
+
+def _kraken_gui_config() -> Dict[str, Any]:
+    """The Kraken ID Parse GUI's own user config.
+
+    That tool owns Kraken2 database configuration for the suite: its Settings
+    panel adds and removes databases and remembers them in `saved_kraken_dbs`.
+    Reading it here means a database the user has already set up once is offered
+    in this tool too, instead of being re-typed as an absolute path — which is
+    how a path from one site ends up hard-coded somewhere it does not exist.
+    The vSNP GUI reads the same file the same way.
+
+    Mirrors that tool's config-dir logic: XDG_CONFIG_HOME, else
+    ~/.config/kraken_id_parse_gui. Absent or unreadable is normal (the sibling
+    may not be installed), and yields no options rather than an error.
+    """
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base = Path(xdg) if xdg else (Path.home() / ".config")
+    try:
+        data = json.loads((base / "kraken_id_parse_gui" / "config.json")
+                          .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _is_kraken_db(path: str) -> bool:
+    """A Kraken2 DB is a directory holding hash.k2d — the check the run itself
+    would fail on, made before the dropdown offers the entry."""
+    try:
+        return (Path(path) / "hash.k2d").is_file()
+    except OSError:
+        return False
+
+
+@app.get("/api/kraken-dbs")
+def api_kraken_dbs():
+    """Kraken2 databases to offer for organism detection.
+
+    This tool's own setting first, then whatever the Kraken ID Parse GUI has
+    remembered, then this machine's conventional location. Entries that are not
+    actually databases are reported but flagged, so a stale path shows as
+    unusable rather than silently failing mid-run.
+    """
+    cfg = load_config()
+    kgui = _kraken_gui_config()
+    current = str(cfg.get("kraken_db") or "").strip()
+    candidates = [
+        current,
+        str(kgui.get("kraken_db") or "").strip(),
+        *[str(p).strip() for p in (kgui.get("saved_kraken_dbs") or [])],
+        str(DEFAULTS.get("kraken_db") or "").strip(),
+    ]
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    for p in candidates:
+        if not p:
+            continue
+        try:
+            key = str(Path(p).resolve())
+        except OSError:
+            key = p
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"path": p, "name": Path(p).name, "usable": _is_kraken_db(p)})
+    return JSONResponse({"databases": out, "current": current})
 
 
 @app.get("/api/config")

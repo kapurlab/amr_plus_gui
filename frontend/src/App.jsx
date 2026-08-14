@@ -110,6 +110,9 @@ export default function App() {
   const [runMlst, setRunMlst] = useState(true);
   const [threads, setThreads] = useState("");
   const [krakenDb, setKrakenDb] = useState("");
+  // Kraken2 databases already configured somewhere in the suite, so this tool
+  // offers a choice instead of asking for an absolute path (see /api/kraken-dbs).
+  const [krakenDbs, setKrakenDbs] = useState([]);
   const [amrfinderDb, setAmrfinderDb] = useState("");
 
   const [running, setRunning] = useState(false);
@@ -145,6 +148,10 @@ export default function App() {
         setSettingsDraft(cfg);
         setServerVersion(cfg.app_version || "");
       })
+      .catch(() => {});
+    fetch("./api/kraken-dbs")
+      .then((r) => r.json())
+      .then((d) => setKrakenDbs(Array.isArray(d.databases) ? d.databases : []))
       .catch(() => {});
     fetch("./api/organism-options")
       .then((r) => r.json())
@@ -734,13 +741,32 @@ export default function App() {
                 </div>
               </div>
               <div className="form-section">
-                <label className="form-label">Kraken2 database path (organism detection)</label>
+                <label className="form-label">Kraken2 database (organism detection)</label>
+                {krakenDbs.length > 0 ? (
+                  <select
+                    value={krakenDbs.some((d) => d.path === (settingsDraft.kraken_db || ""))
+                      ? settingsDraft.kraken_db : ""}
+                    onChange={(e) => setSettingsDraft((d) => ({ ...d, kraken_db: e.target.value }))}
+                  >
+                    <option value="">— type a path below —</option>
+                    {krakenDbs.map((d) => (
+                      <option key={d.path} value={d.path}>
+                        {d.name}{d.usable ? "" : " (not a Kraken2 DB)"} — {d.path}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
                 <input
-                  placeholder="/srv/kapurlab/databases/kraken2/k2_standard_pluspf"
+                  placeholder="/path/to/kraken2/k2_standard_pluspf"
                   value={settingsDraft.kraken_db || ""}
                   onChange={(e) => setSettingsDraft((d) => ({ ...d, kraken_db: e.target.value }))}
                 />
-                <div className="form-hint">Directory containing hash.k2d, opts.k2d, taxo.k2d</div>
+                <div className="form-hint">
+                  Directory containing hash.k2d, opts.k2d, taxo.k2d.
+                  {krakenDbs.length > 0
+                    ? " The list is the databases configured here and in the Kraken ID Parse tool."
+                    : " Add databases in the Kraken ID Parse tool and they appear here as a list."}
+                </div>
               </div>
               <div className="form-section">
                 <label className="form-label">Personal projects root</label>
@@ -766,7 +792,11 @@ export default function App() {
                       disabled={!(settingsDraft.saved_project_roots || []).includes(settingsDraft.projects_root)}>Remove</button>
                   </span>
                 </div>
-                <div className="form-hint">New projects are created under this root. Shared projects at /srv/kapurlab/projects/ are always visible. Click Save to apply.</div>
+                <div className="form-hint">New projects are created under this root.{" "}
+                  {settingsDraft.shared_projects_root
+                    ? <>Shared projects at <code>{settingsDraft.shared_projects_root}</code> are always visible.{" "}</>
+                    : null}
+                  Click Save to apply.</div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button onClick={saveSettings}>Save</button>
@@ -1020,7 +1050,7 @@ export default function App() {
                       <h3>Bring Your Own Reads / Assembly</h3>
                       <div className="row" style={{ margin: 0 }}>
                         <input
-                          placeholder="/srv/kapurlab/… folder, .fastq.gz, or .fasta"
+                          placeholder="/path/to/folder, .fastq.gz, or .fasta"
                           value={addPath[activeProject] || ""}
                           onChange={(e) => setAddPath((m) => ({ ...m, [activeProject]: e.target.value }))}
                           onKeyDown={(e) => { if (e.key === "Enter") linkLocal(activeProject); }}
@@ -1239,9 +1269,23 @@ export default function App() {
               </div>
 
               <div className="form-section">
-                <label className="form-label">Kraken2 DB path</label>
+                <label className="form-label">Kraken2 database</label>
+                {krakenDbs.length > 0 ? (
+                  <select
+                    value={krakenDbs.some((d) => d.path === krakenDb) ? krakenDb : ""}
+                    onChange={(e) => setKrakenDb(e.target.value)}
+                    disabled={running || !runKraken}
+                  >
+                    <option value="">— type a path below —</option>
+                    {krakenDbs.map((d) => (
+                      <option key={d.path} value={d.path}>
+                        {d.name}{d.usable ? "" : " (not a Kraken2 DB)"}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
                 <input
-                  placeholder="/srv/kapurlab/databases/kraken2/k2_standard_pluspf"
+                  placeholder="/path/to/kraken2/k2_standard_pluspf"
                   value={krakenDb}
                   onChange={(e) => setKrakenDb(e.target.value)}
                   disabled={running || !runKraken}

@@ -85,8 +85,10 @@ per-session `/tmp` worktree and rebuilds the frontend from that branch.
 - **FastAPI serves `frontend/dist/`** as StaticFiles. No separate static server.
 - **Rebuild the frontend** after any `frontend/src` edit
   (`cd frontend && npm run build`), then start a fresh OOD session.
-- The conda env owns `amrfinder`, `mlst`, `kraken2`, `shovill`, `spades`,
-  `seqkit`. `PATH` is set to the env's `bin/` in `script.sh.erb`.
+- The conda env owns `amrfinder`, `shovill`, `spades`, `seqkit`. `mlst` and
+  `kraken2` are NOT in it — they run from the sibling mlst_gui /
+  kraken_id_parse_gui envs (`bin/amr_pipeline.py`, `_sibling_env_dir`).
+  `PATH` is set to the env's `bin/` in `script.sh.erb`.
 
 ## 6. Smoke test
 

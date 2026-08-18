@@ -9,7 +9,7 @@
 #   2. pip install backend/requirements.txt into that env.
 #   3. amrfinder -u  -> download the AMRFinderPlus DB (skip if present).
 #   4. Ensure a Kraken2 DB (PlusPF preferred; reuse existing if present).
-#   5. Ensure mlst / PubMLST data is reachable.
+#   5. Confirm sibling-provided software (mlst, kraken2) is resolvable.
 #   6. Build the React frontend (frontend/dist/).
 #
 # Usage:
@@ -173,14 +173,44 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. mlst / PubMLST
+# 4. Sibling-provided software (mlst, kraken2)
 # ---------------------------------------------------------------------------
-if [[ -x "${ENV_BIN}/mlst" ]]; then
-  ok "mlst present: $("${ENV_BIN}/mlst" --version 2>&1 | head -1)"
-  "${ENV_BIN}/mlst" --list >/dev/null 2>&1 && ok "PubMLST schemes reachable" \
+# mlst and kraken2 run from their own tools' envs at runtime (see
+# bin/amr_pipeline.py, _sibling_env_dir) — carrying copies here is what capped
+# this env's solve. Resolve them the way the pipeline will and report. Both are
+# Perl wrappers, so probe with the binary's own env bin first on PATH — exactly
+# how the pipeline invokes them — or `/usr/bin/env perl` picks the wrong perl.
+sibling_bin() {  # sibling_bin <tool_name> <ENV_VAR_SUFFIX> <binary>
+  local tool="$1" var="BDTOOLS_SIBLING_ENV_$2" bin="$3" cand
+  for cand in "${!var:-}" \
+              "$(dirname "${REPO_DIR}")/${tool}/env" \
+              "${BDTOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/bdtools}/checkouts/${tool}/env"; do
+    if [[ -n "${cand}" && -x "${cand}/bin/${bin}" ]]; then
+      echo "${cand}/bin/${bin}"
+      return 0
+    fi
+  done
+  command -v "${bin}" || true   # PATH fallback: envs built before the split
+}
+probe() {  # probe <resolved_binary> <args...> — run with its own bin dir first on PATH
+  local bin="$1"; shift
+  PATH="$(dirname "${bin}"):${PATH}" "${bin}" "$@"
+}
+
+MLST_BIN="$(sibling_bin mlst_gui MLST_GUI mlst)"
+if [[ -n "${MLST_BIN}" ]]; then
+  ok "mlst present: $(probe "${MLST_BIN}" --version 2>&1 | head -1)  (${MLST_BIN})"
+  probe "${MLST_BIN}" --list >/dev/null 2>&1 && ok "PubMLST schemes reachable" \
     || warn "mlst installed but scheme list unavailable; check the bundled db."
 else
-  warn "mlst not in env — MLST corroboration will be skipped at runtime."
+  warn "mlst not found (no sibling mlst_gui env, not on PATH) — MLST corroboration will be skipped at runtime."
+fi
+
+KRAKEN_BIN="$(sibling_bin kraken_id_parse_gui KRAKEN_ID_PARSE_GUI kraken2)"
+if [[ -n "${KRAKEN_BIN}" ]]; then
+  ok "kraken2 present: $(probe "${KRAKEN_BIN}" --version 2>&1 | head -1)  (${KRAKEN_BIN})"
+else
+  warn "kraken2 not found (no sibling kraken_id_parse_gui env, not on PATH) — organism detection from reads will be skipped at runtime."
 fi
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,8 @@
 amr_pipeline.py — orchestrator for the AMRFinderPlus GUI.
 
 Pipeline (per sample):
-  1. Organism detection — Kraken2 on the reads -> report, parsed by
+  1. Organism detection — Kraken2 on the reads (from the sibling
+     kraken_id_parse_gui env, like mlst; PATH fallback) -> report, parsed by
      detect_organism.py (conservative dominance + complex collapse).
   2. Assembly — shovill (preferred) or spades.py --isolate -> assembly.fasta.
      Skipped when an assembly FASTA is provided.
@@ -164,6 +165,13 @@ def _env_for_sibling(env_dir: Optional[Path]) -> Optional[dict]:
 
 _MLST_GUI = _sibling_tool_dir("mlst_gui")
 _MLST_ENV = _sibling_env_dir("mlst_gui", _MLST_GUI)
+# kraken2 moved out the same way mlst did: it runs from kraken_id_parse_gui's
+# env, where its pin lives, instead of being duplicated (and version-capped)
+# here. Envs built before the split still carry a kraken2, so PATH remains the
+# fallback — but the sibling env wins, so those installs stop running a stale
+# copy the moment the sibling exists.
+_KRAKEN_GUI = _sibling_tool_dir("kraken_id_parse_gui")
+_KRAKEN_ENV = _sibling_env_dir("kraken_id_parse_gui", _KRAKEN_GUI)
 _GENOME_SIZES = _CONFIG_DIR / "genome_sizes.yaml"
 
 
@@ -195,21 +203,28 @@ def _run(cmd: List[str], cwd: Optional[Path] = None, env: Optional[dict] = None)
 # ---------------------------------------------------------------------------
 def run_kraken(r1: Path, r2: Optional[Path], outdir: Path, kraken_db: str, threads: int) -> Optional[Path]:
     """Run Kraken2 -> kraken_report.txt. Returns the report path or None."""
-    if not _have("kraken2"):
-        log("WARNING: kraken2 not on PATH — skipping organism detection by reads.")
+    kraken2 = "kraken2"
+    env = None
+    if _KRAKEN_ENV is not None and (_KRAKEN_ENV / "bin" / "kraken2").is_file():
+        kraken2 = str(_KRAKEN_ENV / "bin" / "kraken2")
+        env = _env_for_sibling(_KRAKEN_ENV)
+        log(f"Kraken2 via sibling kraken_id_parse_gui (env: {_KRAKEN_ENV})")
+    elif not _have("kraken2"):
+        log("WARNING: kraken2 not found (no kraken_id_parse_gui sibling env, "
+            "not on PATH) — skipping organism detection by reads.")
         return None
     if not kraken_db:
         log("WARNING: no Kraken2 DB configured — skipping organism detection.")
         return None
     report = outdir / "kraken_report.txt"
     output = outdir / "kraken_output.txt"
-    cmd = ["kraken2", "--db", kraken_db, "--threads", str(threads),
+    cmd = [kraken2, "--db", kraken_db, "--threads", str(threads),
            "--report", str(report), "--output", str(output)]
     if r2:
         cmd += ["--paired", str(r1), str(r2)]
     else:
         cmd += [str(r1)]
-    rc = _run(cmd)
+    rc = _run(cmd, env=env)
     if rc != 0 or not report.is_file():
         log(f"WARNING: kraken2 failed (rc={rc}); continuing without read-based detection.")
         return None

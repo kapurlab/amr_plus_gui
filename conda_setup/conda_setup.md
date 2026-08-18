@@ -16,6 +16,9 @@ conda env create -f conda_setup/environment.yml
 conda run -p /srv/kapurlab/tools/amr_plus_gui/env amrfinder -u
 ```
 
-The env (`environment.yml`) provides AMRFinderPlus (+ StxTyper), mlst, kraken2,
-shovill, spades, seqkit, and the FastAPI web layer. `environment_minimal.yml`
-is a backend-only subset for quick testing.
+The env (`environment.yml`) provides AMRFinderPlus (+ StxTyper), shovill,
+spades, seqkit, and the FastAPI web layer. mlst and kraken2 are deliberately
+NOT in it: they run from the sibling mlst_gui / kraken_id_parse_gui envs (see
+`bin/amr_pipeline.py`), which is what lets this env track current
+AMRFinderPlus releases. `environment_minimal.yml` is a backend-only subset
+for quick testing.

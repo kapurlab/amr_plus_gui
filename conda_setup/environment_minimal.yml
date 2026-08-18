@@ -1,5 +1,6 @@
 # Minimal environment for the AMRFinderPlus GUI (backend + core tools only).
-# The full env (assembler, mlst, kraken, seqkit) is in environment.yml.
+# The full env (assemblers, seqkit, samtools) is in environment.yml; mlst and
+# kraken2 live in their own tools' envs and are not part of either spec.
 name: amr_plus
 channels:
   - conda-forge

@@ -15,7 +15,7 @@ That script:
 2. `pip install -r backend/requirements.txt`,
 3. `amrfinder -u` to download the AMRFinderPlus database,
 4. ensures a Kraken2 DB is reachable (PlusPF preferred),
-5. confirms `mlst` / PubMLST,
+5. confirms `mlst` and `kraken2` resolve from their sibling tools' envs,
 6. builds the React frontend (`frontend/dist/`).
 
 It is idempotent — re-run any time. See `deploy/INSTALL.md` for flags, database

@@ -31,10 +31,13 @@ dependencies:
   # perl-bio-samtools, which holds perl and zlib down and capped
   # ncbi-amrfinderplus at 3.12.8 — a version that cannot read the AMRFinder
   # database now deployed, since 4.x renamed AMRProt to AMRProt.fa. Removing it
-  # lets this env take AMRFinderPlus 4.2.7 and kraken2 2.17.1, verified
-  # installable on linux-64, osx-64 and osx-arm64.
-  - kraken2              # organism detection from reads
-  - krakentools
+  # lets this env take AMRFinderPlus 4.2.7, verified installable on linux-64,
+  # osx-64 and osx-arm64.
+  # NOT kraken2 / krakentools either, for the same reason: organism detection
+  # runs kraken2 from kraken_id_parse_gui's env (see bin/amr_pipeline.py,
+  # _KRAKEN_ENV), where its version is pinned once for the whole suite. The
+  # only Kraken artifacts this tool touches beyond that are report files
+  # written by the Kraken GUI; no KrakenTools script is ever invoked here.
   - shovill              # preferred assembler
   - spades               # assembler fallback (spades.py --isolate)
   - seqkit               # assembly QC stats

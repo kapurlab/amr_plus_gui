@@ -796,10 +796,10 @@ export default function App() {
                   {settingsDraft.shared_projects_root
                     ? <>Shared projects at <code>{settingsDraft.shared_projects_root}</code> are always visible.{" "}</>
                     : null}
-                  Click Save to apply.</div>
+                  Click Save &amp; Refresh to apply.</div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <button onClick={saveSettings}>Save</button>
+                <button onClick={saveSettings} title="Save these settings and reload the app with them — a new path only takes effect once this is clicked">Save &amp; Refresh</button>
               </div>
             </section>
           </div>

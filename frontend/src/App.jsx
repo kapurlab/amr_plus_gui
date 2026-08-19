@@ -247,6 +247,15 @@ export default function App() {
       .catch(() => setSamples((s) => ({ ...s, [name]: [] })));
   }
 
+  /* Clicking anywhere on a project card opens it — the name row was the only
+     live target, so the path and the "N FASTQ" line under it looked clickable
+     and were not. The expanded sample list lives INSIDE this card, so a click
+     there is about a sample and must not fold the project shut underneath it. */
+  function onProjectCardClick(name, event) {
+    if (event.target.closest(".sample-list, input, button, a, select, textarea, label, summary")) return;
+    toggleProject(name);
+  }
+
   function toggleProject(name) {
     const isExpanded = expanded[name];
     setExpanded((e) => ({ ...e, [name]: !isExpanded }));
@@ -880,8 +889,20 @@ export default function App() {
                   <div
                     key={proj.name}
                     className={`list-item ${activeRun?.project === proj.name || activeProject === proj.name ? "active" : ""}`}
+                    onClick={(e) => onProjectCardClick(proj.name, e)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        if (e.target.closest(".sample-list, input, button, a, select, textarea, label, summary")) return;
+                        e.preventDefault();
+                        toggleProject(proj.name);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={Boolean(expanded[proj.name])}
+                    title="Click anywhere on this project to open it"
                   >
-                    <div className="item-top" onClick={() => toggleProject(proj.name)}>
+                    <div className="item-top">
                       <span className="expand-icon">{expanded[proj.name] ? "▾" : "▸"}</span>
                       <div className="list-title" title={proj.name}>{proj.name}</div>
                       <span className={`scope-badge scope-${proj.scope}`}>{proj.scope}</span>

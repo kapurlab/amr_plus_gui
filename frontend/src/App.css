@@ -301,6 +301,16 @@ button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20p
 }
 .list-item.active { border-color: var(--accent-2); box-shadow: 0 0 0 2px rgba(200, 143, 122, 0.2); }
 .list-item .item-top { display: flex; align-items: center; gap: 8px; }
+/* The whole project card is the click target, not just its name row — the
+   path and the "N FASTQ" line under it read as part of the same card and
+   used to be dead. Cursor and focus ring belong to the card for that reason;
+   the expanded sample list inside keeps its own default cursor, since a click
+   there is about a sample, not the project. */
+.list-item[role="button"] { cursor: pointer; }
+.list-item[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.list-item[role="button"] .sample-list { cursor: default; }
+.list-item .item-top { cursor: inherit; }
+
 .expand-icon { font-size: 10px; color: var(--muted); flex-shrink: 0; }
 .list-title { font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .list-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }

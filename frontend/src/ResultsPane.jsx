@@ -7,11 +7,51 @@
    every completed sample in one searchable, sortable, exportable table — not just
    whichever one you last clicked. Per-tool differences arrive as props (columns,
    rowActions, labels), so the table itself stays identical everywhere. */
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { levelOf, reasonsOf, summarizeReason, fmtRunDate } from "./useResults";
 import "./ResultsPane.css";
 
 const LEVEL_TEXT = { pass: "PASS", review: "REVIEW", fail: "FAIL" };
+
+// QC sorts by severity, not alphabetically: a sort meant to surface problems
+// has to put FAIL at one end, and "fail < pass < review" is not that.
+const LEVEL_RANK = { fail: 0, review: 1, pass: 2 };
+const STATUS_RANK = { running: 0, done: 1, "not run": 2 };
+
+/** The comparable value behind one cell.
+ *
+ * Numbers hiding in strings ("3.9%", "1,204", "12.5X") must sort as numbers —
+ * lexical order puts 100 before 20 and makes a metric column useless. */
+function sortValue(row, key, columns) {
+  switch (key) {
+    case "qc": return LEVEL_RANK[levelOf(row)] ?? 9;
+    case "sample": return String(row.sample || "");
+    case "status": return STATUS_RANK[String(row.status || "")] ?? 9;
+    case "run_date": return row.run_date || "";
+    case "files": return (row.files || []).length + (row.cross_tool || []).length;
+    default: {
+      const col = columns.find((c) => c.key === key);
+      if (col && col.sortValue) return col.sortValue(row);
+      return row.metrics ? row.metrics[key] : undefined;
+    }
+  }
+}
+
+function compareValues(a, b) {
+  const blankA = a === null || a === undefined || a === "" || a === "—";
+  const blankB = b === null || b === undefined || b === "" || b === "—";
+  // Missing values sink to the bottom in BOTH directions — a column of blanks
+  // at the top is never what someone sorting wanted to see.
+  if (blankA && blankB) return 0;
+  if (blankA) return 1;
+  if (blankB) return -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  const na = Number(String(a).replace(/[,%\s]/g, "").replace(/[Xx×]$/, ""));
+  const nb = Number(String(b).replace(/[,%\s]/g, "").replace(/[Xx×]$/, ""));
+  if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+  // Natural order, so SRR2 comes before SRR10.
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
 
 export function StatusChip({ row }) {
   const level = levelOf(row);
@@ -91,6 +131,9 @@ export default function ResultsPane({
   selectedKey = null,
 }) {
   const [openFilesRow, setOpenFilesRow] = useState(null);
+  // null key = the server's own order (newest run first), which is the right
+  // default; clicking a header takes over from there.
+  const [sort, setSort] = useState({ key: null, dir: "asc" });
   const entity = labels.entity || "sample";
   const {
     rows, visibleRows, loading, error, reload,
@@ -98,6 +141,40 @@ export default function ResultsPane({
     flaggedOnly, setFlaggedOnly, setRangeDays, clearDates,
     downloadCsv, downloadXlsx,
   } = results;
+
+  const sortedRows = useMemo(() => {
+    if (!sort.key) return visibleRows;
+    const factor = sort.dir === "desc" ? -1 : 1;
+    // Copy first: visibleRows belongs to the hook, and sorting in place would
+    // mutate what every other consumer sees.
+    return [...visibleRows].sort(
+      (a, b) => factor * compareValues(sortValue(a, sort.key, columns),
+                                       sortValue(b, sort.key, columns)));
+  }, [visibleRows, sort, columns]);
+
+  /* Click cycles asc -> desc -> back to the server's order. The third state
+     matters: once you have sorted, "newest first" is otherwise unreachable
+     without reloading the pane. */
+  function toggleSort(key) {
+    setSort((s) => {
+      if (s.key !== key) return { key, dir: "asc" };
+      if (s.dir === "asc") return { key, dir: "desc" };
+      return { key: null, dir: "asc" };
+    });
+  }
+
+  const SortHeader = ({ sortKey, children, align }) => (
+    <th style={{ textAlign: align || "left" }}
+        className={`rp-sortable ${sort.key === sortKey ? "rp-sorted" : ""}`}>
+      <button type="button" className="rp-sort-btn" onClick={() => toggleSort(sortKey)}
+              title={`Sort by ${typeof children === "string" ? children : sortKey}`}>
+        {children}
+        <span className="rp-sort-arrow" aria-hidden="true">
+          {sort.key === sortKey ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
 
   return (
     <section className="panel rp-panel">
@@ -156,17 +233,24 @@ export default function ResultsPane({
                   />
                 </th>
               )}
-              <th>QC</th>
-              <th>{labels.sampleHeader || "Sample"}</th>
-              <th>Status</th>
-              <th>{labels.dateHeader || "Run date / time"}</th>
-              <th>Files</th>
-              {columns.map((c) => <th key={c.key} style={{ textAlign: c.align || "left" }}>{c.label}</th>)}
+              <SortHeader sortKey="qc">QC</SortHeader>
+              <SortHeader sortKey="sample">{labels.sampleHeader || "Sample"}</SortHeader>
+              <SortHeader sortKey="status">Status</SortHeader>
+              <SortHeader sortKey="run_date">{labels.dateHeader || "Run date / time"}</SortHeader>
+              <SortHeader sortKey="files">Files</SortHeader>
+              {columns.map((c) => (
+                // A column with nothing comparable behind it (a links cell, say)
+                // opts out with sortable:false rather than offering a control
+                // that does nothing.
+                c.sortable === false
+                  ? <th key={c.key} style={{ textAlign: c.align || "left" }}>{c.label}</th>
+                  : <SortHeader key={c.key} sortKey={c.key} align={c.align}>{c.label}</SortHeader>
+              ))}
               {onDetail && <th />}
             </tr>
           </thead>
           <tbody>
-            {!loading && visibleRows.length === 0 && (
+            {!loading && sortedRows.length === 0 && (
               <tr>
                 <td className="rp-empty" colSpan={20}>
                   {rows.length
@@ -175,7 +259,7 @@ export default function ResultsPane({
                 </td>
               </tr>
             )}
-            {visibleRows.map((row) => {
+            {sortedRows.map((row) => {
               const key = row.run_dir || row.sample;
               const selectable = Boolean(onRowSelect);
               return (

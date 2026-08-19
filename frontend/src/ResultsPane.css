@@ -124,3 +124,30 @@
 /* Keep the timestamp on one line — the column is narrow and a wrapped time reads
    like two separate values. */
 .rp-date { white-space: nowrap; }
+
+/* Sortable headers. The whole header is a button so the click target is the
+   cell, not the label — and it stays keyboard-reachable, which a click
+   handler on a bare <th> would not be. */
+.rp-table th.rp-sortable { padding: 0; }
+.rp-sort-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 8px 10px;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rp-sort-btn:hover { background: rgba(127, 127, 127, 0.12); }
+.rp-sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The idle ↕ stays faint so a sorted column reads at a glance; it becomes
+   fully visible on hover so the affordance is discoverable. */
+.rp-sort-arrow { font-size: 9px; opacity: 0.35; }
+.rp-sort-btn:hover .rp-sort-arrow { opacity: 0.8; }
+.rp-table th.rp-sorted .rp-sort-arrow { opacity: 1; }
+.rp-table th.rp-sorted { color: var(--accent); }

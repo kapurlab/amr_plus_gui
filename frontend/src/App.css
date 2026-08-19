@@ -321,6 +321,32 @@ button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20p
 }
 .sample-item:hover { border-color: var(--accent); }
 .sample-item.active { border-color: var(--accent-2); box-shadow: 0 0 0 2px rgba(200, 143, 122, 0.2); }
+
+/* Whole-card selection. The checkbox is a fingernail-sized target on lists
+   that run to thousands of rows, so the card itself is the click target;
+   .checked gives the selection a state you can see at a glance while
+   scanning, which a lone tick in the corner does not. */
+.sample-item.selectable { cursor: pointer; }
+.sample-item.selectable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.sample-item.checked {
+  border-color: var(--accent);
+  background: var(--panel-2);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.sample-item.checked .sample-name { color: var(--accent); }
+/* A status badge that navigates has to look like it does. */
+.run-status.link-like {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .sample-name-row { display: flex; align-items: center; gap: 6px; }
 .sample-name { font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .sample-files { font-size: 11px; color: var(--muted); margin-top: 4px; }

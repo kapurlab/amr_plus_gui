@@ -385,6 +385,37 @@ export default function App() {
   const isActive = (project, s) =>
     activeRun && activeRun.project === project && activeRun.sample === s.sample;
 
+  // Anchor for shift-click range selection: the last row toggled by hand.
+  const lastToggledRef = useRef(null);
+
+  /* Clicking anywhere on a sample card selects it — the checkbox is a target
+     the size of a fingernail on lists that run to thousands of rows. Clicks on
+     a real control (a button, a link, the checkbox) or on the sample name
+     (which opens that sample's results) are left alone, so the card being
+     clickable never steals a deliberate action. Shift-click extends from the
+     last row toggled, the convention every file manager uses. */
+  function onSampleRowClick(project, s, event) {
+    if (event.target.closest("input, button, a, select, textarea, label, summary, .sample-name, .sample-results-inline")) return;
+    if (event.shiftKey && lastToggledRef.current) {
+      const vis = visibleSamples(project);
+      const from = vis.findIndex((x) => sampleKey(project, x) === lastToggledRef.current);
+      const to = vis.findIndex((x) => sampleKey(project, x) === sampleKey(project, s));
+      if (from !== -1 && to !== -1) {
+        const [lo, hi] = from < to ? [from, to] : [to, from];
+        setCheckedKeys((m) => {
+          const next = { ...m };
+          for (let i = lo; i <= hi; i++) {
+            next[sampleKey(project, vis[i])] = { project, ...vis[i] };
+          }
+          return next;
+        });
+        return;
+      }
+    }
+    lastToggledRef.current = sampleKey(project, s);
+    toggleChecked(project, s);
+  }
+
   function toggleChecked(project, s) {
     const key = sampleKey(project, s);
     setCheckedKeys((m) => {
@@ -903,7 +934,19 @@ export default function App() {
                           return (
                           <div
                             key={s.r1}
-                            className={`sample-item ${isActive(proj.name, s) ? "active" : ""}`}
+                            className={`sample-item selectable ${checked ? "checked" : ""} ${isActive(proj.name, s) ? "active" : ""}`}
+                            onClick={(e) => onSampleRowClick(proj.name, s, e)}
+                            onKeyDown={(e) => {
+                              if (e.key === " " || e.key === "Enter") {
+                                if (e.target.closest("input, button, a, select, textarea, label, summary, .sample-name, .sample-results-inline")) return;
+                                e.preventDefault();
+                                onSampleRowClick(proj.name, s, e);
+                              }
+                            }}
+                            role="checkbox"
+                            aria-checked={checked}
+                            tabIndex={0}
+                            title="Click anywhere on this sample to select it (shift-click to select a range)"
                           >
                             <div className="sample-name-row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                               <input

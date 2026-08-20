@@ -198,6 +198,22 @@ def _run(cmd: List[str], cwd: Optional[Path] = None, env: Optional[dict] = None)
         return 127
 
 
+def _default_threads() -> int:
+    """Half the machine, capped by the session's declared core budget.
+
+    A dashboard session (BDTOOLS_SESSION_CORES, set by the OOD card) or a
+    Slurm allocation (SLURM_CPUS_PER_TASK) states how many cores this session
+    may use; kraken2/shovill/spades must not take a shared box from the other
+    sessions on it. An explicit --threads still wins; absent the variables,
+    standalone behavior is unchanged."""
+    n = max(1, (os.cpu_count() or 4) // 2)
+    for var in ("BDTOOLS_SESSION_CORES", "SLURM_CPUS_PER_TASK"):
+        val = os.environ.get(var, "").strip()
+        if val.isdigit() and int(val) > 0:
+            return max(1, min(n, int(val)))
+    return n
+
+
 # ---------------------------------------------------------------------------
 # Step 1 — Kraken2
 # ---------------------------------------------------------------------------
@@ -473,7 +489,7 @@ def main(argv=None) -> int:
     ap.add_argument("--no-mlst", action="store_true", default=False)
     ap.add_argument("--kraken-db", default=os.environ.get("KRAKEN_DB", ""))
     ap.add_argument("--amrfinder-db", default=None)
-    ap.add_argument("--threads", type=int, default=max(1, (os.cpu_count() or 4) // 2))
+    ap.add_argument("--threads", type=int, default=_default_threads())
     ap.add_argument("--ident-min", type=float, default=-1.0)
     ap.add_argument("--coverage-min", type=float, default=0.5)
     args = ap.parse_args(argv)

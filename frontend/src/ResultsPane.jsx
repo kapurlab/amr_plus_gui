@@ -129,6 +129,13 @@ export default function ResultsPane({
   // Omitted by default, so tools that don't pass it are visually unchanged.
   onRowSelect = null,
   selectedKey = null,
+  // Rendered under the empty-state message when this project has no rows.
+  // The table is scoped to ONE project, and that scoping has misread as data
+  // loss: a finished run "vanished" because the page reloaded with a different
+  // project selected and the empty state said nothing about where results DO
+  // exist. The hosting App knows the other projects' run counts, so it supplies
+  // the hint (typically buttons that switch projects); the table stays generic.
+  emptyHint = null,
 }) {
   const [openFilesRow, setOpenFilesRow] = useState(null);
   // null key = the server's own order (newest run first), which is the right
@@ -255,7 +262,13 @@ export default function ResultsPane({
                 <td className="rp-empty" colSpan={20}>
                   {rows.length
                     ? `No ${entity}s match the current filters.`
-                    : `No completed ${entity}s yet — run one and it will appear here.`}
+                    : <>
+                        {/* "in this project" is load-bearing: without it, a user
+                            whose selection reset on reload reads this as "your
+                            run is gone" when it is one project switch away. */}
+                        {`No completed ${entity}s in this project yet — run one and it will appear here.`}
+                        {emptyHint}
+                      </>}
                 </td>
               </tr>
             )}

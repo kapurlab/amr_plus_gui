@@ -4,6 +4,7 @@ import ThemeToggle from "./ThemeToggle";
 import CitationFooter from "./Citations";
 import ResultsPane from "./ResultsPane";
 import { useResults, useVisibleSelection } from "./useResults";
+import CopyLogButton from "./CopyLogButton";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1590,6 +1591,7 @@ export default function App() {
         {/* ════════════════════════════════════════════════════════ */}
         <div className="row-header">
           <h2>Pipeline Log</h2>
+          <CopyLogButton text={() => logLines.join("\n")} />
           <button className="ghost" onClick={() => setShowLogs(!showLogs)}>
             {showLogs ? "Hide" : "Show"}
           </button>

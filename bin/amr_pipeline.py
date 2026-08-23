@@ -474,9 +474,14 @@ def run_mlst(assembly: Path, outdir: Path, sample: str) -> Optional[Path]:
         if not Path(py).is_file():
             py = sys.executable
         log(f"MLST via sibling mlst_gui (env: {_MLST_ENV or 'this env'})")
-        rc = _run(_sibling_arch_pin(_MLST_ENV)
-                  + [py, str(runner), "--assembly", str(assembly),
-                     "--outdir", str(outdir), "--label", sample],
+        # Pin only when the interpreter actually comes from the sibling env —
+        # py falls back to sys.executable when the mlst env is half-provisioned,
+        # and pinning OUR interpreter to the SIBLING's platform is the same
+        # wrong-slice failure this exists to prevent, inverted.
+        pin = (_sibling_arch_pin(_MLST_ENV)
+               if _MLST_ENV is not None and py.startswith(str(_MLST_ENV)) else [])
+        rc = _run(pin + [py, str(runner), "--assembly", str(assembly),
+                         "--outdir", str(outdir), "--label", sample],
                   env=_env_for_sibling(_MLST_ENV))
         if rc == 0 and out_json.is_file():
             return out_json

@@ -153,6 +153,38 @@ def _sibling_env_dir(name: str, tool_dir: Path):
     return None
 
 
+def _sibling_arch_pin(env_dir) -> list:
+    """['/usr/bin/arch', '-arm64'] (or -x86_64) for a sibling env, else [].
+
+    A sibling env's binaries must run under the SIBLING env's architecture, not
+    this backend's. This backend is arch-pinned by its launcher for its OWN env;
+    on a machine holding both osx-64 and osx-arm64 envs (real on lab Macs), the
+    inherited preference is wrong for one of them — and a universal binary in
+    the sibling env (the August 2026 case: perl) then picks the slice its
+    modules were not built for and dies at startup while every file check
+    passes. The platform an env was BUILT for is the majority "subdir" over its
+    conda-meta records — the same rule the suite's launchers use. Empty when
+    the env records nothing or off macOS: assert nothing rather than guess.
+    """
+    import json as _json
+    if sys.platform != "darwin" or env_dir is None or not os.path.exists("/usr/bin/arch"):
+        return []
+    counts = {}
+    try:
+        for mj in (Path(env_dir) / "conda-meta").glob("*.json"):
+            try:
+                sd = _json.loads(mj.read_text(encoding="utf-8")).get("subdir", "")
+            except Exception:
+                continue
+            if sd and sd != "noarch":
+                counts[sd] = counts.get(sd, 0) + 1
+    except OSError:
+        return []
+    top = max(counts, key=counts.get) if counts else ""
+    return {"osx-arm64": ["/usr/bin/arch", "-arm64"],
+            "osx-64": ["/usr/bin/arch", "-x86_64"]}.get(top, [])
+
+
 def _env_for_sibling(env_dir: Optional[Path]) -> Optional[dict]:
     """This environment, with a sibling env's bin FIRST on PATH."""
     if env_dir is None:
@@ -221,10 +253,12 @@ def run_kraken(r1: Path, r2: Optional[Path], outdir: Path, kraken_db: str, threa
     """Run Kraken2 -> kraken_report.txt. Returns the report path or None."""
     kraken2 = "kraken2"
     env = None
+    arch_pin = []
     if _KRAKEN_ENV is not None and (_KRAKEN_ENV / "bin" / "kraken2").is_file():
         kraken2 = str(_KRAKEN_ENV / "bin" / "kraken2")
         env = _env_for_sibling(_KRAKEN_ENV)
         log(f"Kraken2 via sibling kraken_id_parse_gui (env: {_KRAKEN_ENV})")
+        arch_pin = _sibling_arch_pin(_KRAKEN_ENV)  # kraken2 is a perl script; see _sibling_arch_pin
     elif not _have("kraken2"):
         log("WARNING: kraken2 not found (no kraken_id_parse_gui sibling env, "
             "not on PATH) — skipping organism detection by reads.")
@@ -234,7 +268,8 @@ def run_kraken(r1: Path, r2: Optional[Path], outdir: Path, kraken_db: str, threa
         return None
     report = outdir / "kraken_report.txt"
     output = outdir / "kraken_output.txt"
-    cmd = [kraken2, "--db", kraken_db, "--threads", str(threads),
+    cmd = (arch_pin if _KRAKEN_ENV is not None and kraken2.startswith(str(_KRAKEN_ENV)) else []) \
+        + [kraken2, "--db", kraken_db, "--threads", str(threads),
            "--report", str(report), "--output", str(output)]
     if r2:
         cmd += ["--paired", str(r1), str(r2)]
@@ -439,8 +474,9 @@ def run_mlst(assembly: Path, outdir: Path, sample: str) -> Optional[Path]:
         if not Path(py).is_file():
             py = sys.executable
         log(f"MLST via sibling mlst_gui (env: {_MLST_ENV or 'this env'})")
-        rc = _run([py, str(runner), "--assembly", str(assembly),
-                   "--outdir", str(outdir), "--label", sample],
+        rc = _run(_sibling_arch_pin(_MLST_ENV)
+                  + [py, str(runner), "--assembly", str(assembly),
+                     "--outdir", str(outdir), "--label", sample],
                   env=_env_for_sibling(_MLST_ENV))
         if rc == 0 and out_json.is_file():
             return out_json

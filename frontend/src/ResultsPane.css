@@ -151,3 +151,9 @@
 .rp-sort-btn:hover .rp-sort-arrow { opacity: 0.8; }
 .rp-table th.rp-sorted .rp-sort-arrow { opacity: 1; }
 .rp-table th.rp-sorted { color: var(--accent); }
+
+/* Resizable columns (ResizableTable). Only the sized state needs anything from
+   here: the grip occupies the last 9px of the header cell, so the sort arrow
+   has to be kept out from under it once a narrowed column pushes it right. */
+.rp-table.rt-sized .rp-sort-btn { padding-right: 15px; }
+.rp-table.rt-sized thead th:not(.rp-sortable) { padding-right: 15px; }

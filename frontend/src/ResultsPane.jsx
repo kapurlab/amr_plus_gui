@@ -9,6 +9,7 @@
    rowActions, labels), so the table itself stays identical everywhere. */
 import React, { useMemo, useState } from "react";
 import { levelOf, reasonsOf, summarizeReason, fmtRunDate } from "./useResults";
+import { ResizableTable, Grip, useColumnWidths } from "./ResizableTable";
 import "./ResultsPane.css";
 
 const LEVEL_TEXT = { pass: "PASS", review: "REVIEW", fail: "FAIL" };
@@ -114,6 +115,31 @@ function FilesCell({ row, project, open, onToggle }) {
   );
 }
 
+/* Module scope, NOT redefined inside ResultsPane on every render.
+   A component declared in the render body is a NEW type each time, so React
+   unmounts and remounts the whole header row on every keystroke in the filter
+   box — which threw away keyboard focus on a resize grip after a single nudge
+   (and re-created nine header cells for nothing). Taking the sort state as
+   props keeps the type stable and the DOM in place. */
+function SortHeader({ sortKey, children, align, sort, onSort }) {
+  return (
+    <th style={{ textAlign: align || "left" }}
+        className={`rp-sortable ${sort.key === sortKey ? "rp-sorted" : ""}`}>
+      <button type="button" className="rp-sort-btn" onClick={() => onSort(sortKey)}
+              title={`Sort by ${typeof children === "string" ? children : sortKey}`}>
+        {/* The label is wrapped so a narrowed column truncates it with an
+            ellipsis. A bare text node inside a flex row cannot be given one,
+            and the label would spill across the next column instead. */}
+        <span className="rt-th-label">{children}</span>
+        <span className="rp-sort-arrow" aria-hidden="true">
+          {sort.key === sortKey ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+      <Grip label={typeof children === "string" ? children : sortKey} />
+    </th>
+  );
+}
+
 export default function ResultsPane({
   project,
   results,
@@ -138,6 +164,10 @@ export default function ResultsPane({
   emptyHint = null,
 }) {
   const [openFilesRow, setOpenFilesRow] = useState(null);
+  /* Column widths, remembered per tool. Keyed by the pane title rather than a
+     bare "results": mhc_gui and ncbi_submit_gui each render two of these panes,
+     and one shared key would have the second overwrite the first's layout. */
+  const colWidths = useColumnWidths(`results:${title}`);
   // null key = the server's own order (newest run first), which is the right
   // default; clicking a header takes over from there.
   const [sort, setSort] = useState({ key: null, dir: "asc" });
@@ -170,24 +200,24 @@ export default function ResultsPane({
     });
   }
 
-  const SortHeader = ({ sortKey, children, align }) => (
-    <th style={{ textAlign: align || "left" }}
-        className={`rp-sortable ${sort.key === sortKey ? "rp-sorted" : ""}`}>
-      <button type="button" className="rp-sort-btn" onClick={() => toggleSort(sortKey)}
-              title={`Sort by ${typeof children === "string" ? children : sortKey}`}>
-        {children}
-        <span className="rp-sort-arrow" aria-hidden="true">
-          {sort.key === sortKey ? (sort.dir === "asc" ? "▲" : "▼") : "↕"}
-        </span>
-      </button>
-    </th>
-  );
+  // Passed to every SortHeader. The component is at module scope (see the note
+  // there) and takes the sort state as props rather than closing over it.
+  const sortProps = { sort, onSort: toggleSort };
 
   return (
     <section className="panel rp-panel">
       <div className="panel-header">
         <h2>{title}</h2>
         <div className="panel-actions">
+          {/* Only once there is something to undo — an always-present Reset
+              invites the question "reset to what?" of a table nobody has
+              touched. */}
+          {colWidths.resized && (
+            <button className="ghost action rt-reset" onClick={colWidths.reset}
+                    title="Put every column back to its automatic width">
+              Reset widths
+            </button>
+          )}
           <button className="ghost action" onClick={reload}>↻ Refresh</button>
           <button className="ghost action" onClick={downloadCsv}
                   disabled={!visibleRows.length}>Download CSV</button>
@@ -225,7 +255,7 @@ export default function ResultsPane({
       </div>
 
       <div className="rp-table-wrap">
-        <table className="rp-table">
+        <ResizableTable className="rp-table" widths={colWidths}>
           <thead>
             <tr>
               {selection && (
@@ -240,18 +270,21 @@ export default function ResultsPane({
                   />
                 </th>
               )}
-              <SortHeader sortKey="qc">QC</SortHeader>
-              <SortHeader sortKey="sample">{labels.sampleHeader || "Sample"}</SortHeader>
-              <SortHeader sortKey="status">Status</SortHeader>
-              <SortHeader sortKey="run_date">{labels.dateHeader || "Run date / time"}</SortHeader>
-              <SortHeader sortKey="files">Files</SortHeader>
+              <SortHeader {...sortProps} sortKey="qc">QC</SortHeader>
+              <SortHeader {...sortProps} sortKey="sample">{labels.sampleHeader || "Sample"}</SortHeader>
+              <SortHeader {...sortProps} sortKey="status">Status</SortHeader>
+              <SortHeader {...sortProps} sortKey="run_date">{labels.dateHeader || "Run date / time"}</SortHeader>
+              <SortHeader {...sortProps} sortKey="files">Files</SortHeader>
               {columns.map((c) => (
                 // A column with nothing comparable behind it (a links cell, say)
                 // opts out with sortable:false rather than offering a control
                 // that does nothing.
                 c.sortable === false
-                  ? <th key={c.key} style={{ textAlign: c.align || "left" }}>{c.label}</th>
-                  : <SortHeader key={c.key} sortKey={c.key} align={c.align}>{c.label}</SortHeader>
+                  ? <th key={c.key} style={{ textAlign: c.align || "left" }}>
+                      <span className="rt-th-label">{c.label}</span>
+                      <Grip label={c.label} />
+                    </th>
+                  : <SortHeader {...sortProps} key={c.key} sortKey={c.key} align={c.align}>{c.label}</SortHeader>
               ))}
               {onDetail && <th />}
             </tr>
@@ -334,7 +367,7 @@ export default function ResultsPane({
               );
             })}
           </tbody>
-        </table>
+        </ResizableTable>
       </div>
       {visibleRows.length > 8 && <div className="rp-scroll-note">Scroll for more {entity}s.</div>}
     </section>

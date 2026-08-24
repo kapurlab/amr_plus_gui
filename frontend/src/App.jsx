@@ -3,6 +3,8 @@ import "./App.css";
 import ThemeToggle from "./ThemeToggle";
 import CitationFooter from "./Citations";
 import ResultsPane from "./ResultsPane";
+import { PaneSplitters } from "./SplitPane";
+import { ResizableTable, Grip } from "./ResizableTable";
 import { useResults, useVisibleSelection } from "./useResults";
 import CopyLogButton from "./CopyLogButton";
 
@@ -693,6 +695,9 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Draggable dividers for every two-pane row on the page (see
+          SplitPane.jsx). One element, no per-row wiring. */}
+      <PaneSplitters />
       <input
         ref={uploadInputRef}
         type="file"
@@ -1514,18 +1519,18 @@ export default function App() {
                     </div>
                   ) : (
                     <div style={{ overflowX: "auto" }}>
-                      <table className="result-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <ResizableTable id="amrfinder.elements" className="result-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                         <thead>
                           <tr style={{ textAlign: "left", borderBottom: "2px solid var(--border, #ddd)" }}>
-                            <th style={{ padding: "6px 8px" }}>Element</th>
-                            <th style={{ padding: "6px 8px" }}>Name</th>
-                            <th style={{ padding: "6px 8px" }}>Type</th>
-                            <th style={{ padding: "6px 8px" }}>Subtype</th>
-                            <th style={{ padding: "6px 8px" }}>Class</th>
-                            <th style={{ padding: "6px 8px" }}>Subclass</th>
-                            <th style={{ padding: "6px 8px" }}>Method</th>
-                            <th style={{ padding: "6px 8px", textAlign: "right" }}>% Cov</th>
-                            <th style={{ padding: "6px 8px", textAlign: "right" }}>% Id</th>
+                            <th style={{ padding: "6px 8px" }}><span className="rt-th-label">Element</span><Grip label="Element" /></th>
+                            <th style={{ padding: "6px 8px" }}><span className="rt-th-label">Name</span><Grip label="Name" /></th>
+                            <th style={{ padding: "6px 8px" }}><span className="rt-th-label">Type</span><Grip label="Type" /></th>
+                            <th style={{ padding: "6px 8px" }}><span className="rt-th-label">Subtype</span><Grip label="Subtype" /></th>
+                            <th style={{ padding: "6px 8px" }}><span className="rt-th-label">Class</span><Grip label="Class" /></th>
+                            <th style={{ padding: "6px 8px" }}><span className="rt-th-label">Subclass</span><Grip label="Subclass" /></th>
+                            <th style={{ padding: "6px 8px" }}><span className="rt-th-label">Method</span><Grip label="Method" /></th>
+                            <th style={{ padding: "6px 8px", textAlign: "right" }}><span className="rt-th-label">% Cov</span><Grip label="% Cov" /></th>
+                            <th style={{ padding: "6px 8px", textAlign: "right" }}><span className="rt-th-label">% Id</span><Grip label="% Id" /></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1545,7 +1550,7 @@ export default function App() {
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </ResizableTable>
                     </div>
                   )}
 

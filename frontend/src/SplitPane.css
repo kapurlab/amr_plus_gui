@@ -1,0 +1,105 @@
+/* SHARED COMPONENT — byte-identical across the Kapur Lab tool suite.
+   Source of truth: amr_plus_gui/frontend/src/SplitPane.css
+
+   Every class is sp- prefixed and no host stylesheet is touched. Uses only the
+   variables that App.css AND vsnp_gui's styles.css both declare (--border,
+   --accent), so this drops into either without a port — the same rule
+   Citations.css and ResizableTable.css follow. */
+
+/* The row becomes the positioning context for the divider. One class, so it
+   cannot outrank anything the host stylesheet says about these rows. */
+.sp-split { position: relative; }
+
+/* The dragged proportions, applied ONLY above the width at which every row in
+   the suite collapses to a single column (App.css and styles.css both say
+   `@media (max-width: 900px) { .row-grid { grid-template-columns: 1fr } }`).
+   Below that the panes sit above each other and a horizontal split would be
+   nonsense, so the stored ratio is simply not applied — it is still there when
+   the window widens again.
+
+   `[data-sp-resized]` is an attribute selector, so this outranks the host's
+   `.row-grid-split` / `.row-grid-run` class rules on specificity alone: no
+   !important, and no rule at all until the first drag sets the attribute.
+
+   minmax keeps the host's floor idea: a pane may be leaned away from, never
+   crushed to nothing. 220px is below the narrowest floor in the suite (260px)
+   so dragging can still reach a genuinely small pane. */
+@media (min-width: 901px) {
+  .sp-split[data-sp-resized="true"] {
+    grid-template-columns: minmax(220px, var(--sp-a)) minmax(220px, var(--sp-b));
+  }
+}
+
+/* Sits in the middle of the gutter the row already leaves between panes, so the
+   divider IS the boundary and nothing is displaced to make room for it. Its
+   left offset is set inline from the measured edge. */
+.sp-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  margin-left: -7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  /* Without this a touch drag scrolls the page instead of moving the divider. */
+  touch-action: none;
+  user-select: none;
+  /* Above the panels' own backgrounds, below any dialog. */
+  z-index: 3;
+  /* Invisible until wanted: the defaults are good, and a control on every row
+     of every page would be visual noise for a thing used occasionally. Hovering
+     the row is what reveals it. */
+  opacity: 0;
+  transition: opacity 120ms ease;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.sp-split:hover > .sp-handle,
+.sp-handle:hover,
+.sp-handle:focus-visible { opacity: 1; }
+
+/* A row that HAS been leaned keeps a faint divider, so a custom layout is
+   visibly custom (and the reset target is findable without hunting). */
+.sp-split[data-sp-resized="true"] > .sp-handle { opacity: 0.45; }
+
+.sp-handle-line {
+  width: 3px;
+  height: 44px;
+  max-height: 60%;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background-color 120ms ease, height 120ms ease;
+}
+
+.sp-handle:hover .sp-handle-line,
+.sp-handle:focus-visible .sp-handle-line {
+  background: var(--accent);
+  height: 72px;
+}
+
+.sp-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* While a drag is in flight the cursor and the no-select apply to the whole
+   page: the pointer spends the drag outside the 14px handle. */
+body.sp-dragging { cursor: col-resize; }
+body.sp-dragging * { user-select: none !important; }
+
+/* Stacked rows have no vertical boundary. Belt to the JS, which also stops
+   rendering the handle once it measures a single-track grid. */
+@media (max-width: 900px) {
+  .sp-handle { display: none; }
+}
+
+/* Someone who prefers less motion still gets the divider, just without the
+   fade and the grow. */
+@media (prefers-reduced-motion: reduce) {
+  .sp-handle, .sp-handle-line { transition: none; }
+}

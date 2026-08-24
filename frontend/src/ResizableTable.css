@@ -1,0 +1,100 @@
+/* SHARED COMPONENT — byte-identical across the Kapur Lab tool suite.
+   Source of truth: amr_plus_gui/frontend/src/ResizableTable.css
+
+   Every class is rt- prefixed and no host stylesheet is touched. Uses only the
+   variables that App.css AND vsnp_gui's styles.css both declare (--border,
+   --accent), so this drops into either without a port — the same rule
+   Citations.css follows. */
+
+/* The header cell has to be a positioning context for the grip. Kept at one
+   class + one element so it LOSES to the sticky-header rules the panes already
+   have (.rp-table thead th, .qc-table.scrollable thead th): sticky is itself a
+   containing block, so those headers need nothing from here, and overriding
+   them would unstick every results table in the suite. */
+.rt-table th { position: relative; }
+
+/* Sits in the last few pixels of the header cell with its line flush against
+   the column edge, so the visible divider IS the boundary. Deliberately not
+   straddling it: sized mode clips overflow on the cell, and anything hanging
+   past the right edge would be clipped away exactly where the line is. */
+.rt-grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 9px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  cursor: col-resize;
+  /* Without this a touch drag scrolls the pane instead of moving the column. */
+  touch-action: none;
+  /* The grip sits over the sort button that fills the header cell. */
+  z-index: 2;
+  user-select: none;
+}
+
+.rt-grip-line {
+  width: 2px;
+  height: 62%;
+  border-radius: 1px;
+  background: var(--border, #ddd);
+  opacity: 0;
+  transition: opacity 90ms ease, background 90ms ease, height 90ms ease;
+}
+/* The dividers are quiet until you go looking for them: a permanent line in
+   every header reads as a table border and competes with the sort arrows. */
+.rt-table thead:hover .rt-grip-line { opacity: 0.7; }
+.rt-grip:hover .rt-grip-line,
+.rt-grip:focus-visible .rt-grip-line {
+  opacity: 1;
+  background: var(--accent, #4c8c8a);
+  width: 3px;
+  height: 80%;
+}
+.rt-grip:focus-visible {
+  outline: 2px solid var(--accent, #4c8c8a);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+/* Whole-page state during a drag: the cursor stays col-resize even where the
+   pointer has wandered off the table, and dragging across rows must not paint
+   the page in a text selection. */
+body.rt-dragging,
+body.rt-dragging * { cursor: col-resize !important; user-select: none !important; }
+
+/* ---------------------------------------------------------------------------
+   Sized mode — only once the reader has actually dragged something. Before
+   that the table carries none of these rules and lays out exactly as it always
+   did, which is why adding grips to a table cannot change how it looks. */
+
+/* Fixed layout does not shrink a cell to fit, so anything too wide has to be
+   told what to do or it spills over its neighbour. Clip, and give nowrap text
+   an ellipsis so a truncated value reads as truncated rather than as a
+   different, shorter value. */
+.rt-sized th,
+.rt-sized td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Wrapping cells have to break inside a long token as well — an accession, a
+   file path or a taxon string may have no space to wrap at. */
+.rt-sized td { overflow-wrap: anywhere; }
+
+/* A header whose label is a flex row (the shared sort button) cannot ellipsis a
+   bare text node, so panes wrap the label and it is truncated on its own.
+   flex-shrink only: growing it would push the sort arrow under the grip. */
+.rt-th-label {
+  /* block, not inline: overflow/text-overflow do nothing to an inline box, so
+     an inline label would spill across its neighbour instead of truncating. */
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "Reset widths" — hosts show it only while widths are customised. */
+.rt-reset { font-size: 11px; }

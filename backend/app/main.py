@@ -1549,6 +1549,48 @@ async def api_job_log(job_id: str, request: Request):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+# ---------------------------------------------------------------------------
+# Plain (non-streaming) log + status in ONE GET — polled by the UI.
+#
+# The SSE route above stays for anything still listening, but the UI no longer
+# uses it. Behind an Open OnDemand /rnode Apache reverse proxy a held-open SSE
+# connection is hazardous: the proxy hands the SSE buffer back as the body of
+# concurrent sibling GETs, so a status poll arrives as log text, JSON parsing
+# fails, and a run that succeeded is reported "failed". The same proxy truncates
+# buffered responses at roughly 43.5 KB. A plain GET returning BOTH the recorded
+# status (from the real exit code) and the current log text, tail-truncated well
+# under that ceiling, drives status and live-ish logs from one proxy-safe poll
+# loop. Pattern from mhc_gui, which polled from the start and never had the bug;
+# the 30000-char tail is the value field-tested behind that proxy (ICAR-NIVEDI).
+# ---------------------------------------------------------------------------
+_LOGTEXT_MAX_CHARS = 30000
+_LOGTEXT_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mGKHFABCDJsur]')
+
+
+@app.get("/api/jobs/{job_id}/logtext")
+def api_job_logtext(job_id: str):
+    job = job_manager.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    text = ""
+    lp = job.get("log_path")
+    try:
+        if lp and Path(lp).is_file():
+            text = Path(lp).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+    text = _LOGTEXT_ANSI_RE.sub("", text)
+    truncated = len(text) > _LOGTEXT_MAX_CHARS
+    if truncated:
+        text = "...(earlier log truncated)...\n" + text[-_LOGTEXT_MAX_CHARS:]
+    return JSONResponse({
+        "status": job.get("status"),
+        "exit_code": job.get("exit_code"),
+        "log": text,
+        "truncated": truncated,
+    })
+
+
 # File extensions a browser can render in a tab (open inline); everything else
 # is sent as a download. Maps extension -> MIME type.
 _INLINE_MEDIA = {

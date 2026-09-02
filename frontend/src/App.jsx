@@ -578,45 +578,72 @@ export default function App() {
   }
 
   function streamLogUntilDone(id, samp, done) {
-    const es = new EventSource(`./api/jobs/${id}/log`);
-    eventSourceRef.current = es;
-    es.onmessage = (evt) => {
-      const data = evt.data;
-      if (data === "[DONE]") {
-        es.close();
-        setRunning(false);
-        fetch(`./api/jobs/${id}`)
-          .then((r) => r.json())
-          .then((job) => {
-            setJobStatus(job.status);
-            setCurrentStep("");
-            if (samp) {
-              loadSampleResults(samp.project, samp);
-              loadAmrTable(samp.project, samp);
-            }
-            loadProjects();
-            // The Results table is the place people now look for finished work,
-            // so it has to reflect the run that just ended.
-            results.reload();
-          })
-          .catch(() => {})
-          .finally(() => done());
-      } else {
-        setLogLines((prev) => [...prev, data]);
-        if (/Step \d+:/i.test(data) ||
-            /Resolving organism/i.test(data) ||
-            /AMRFinderPlus/i.test(data) ||
-            /Pipeline completed/i.test(data)) {
-          setCurrentStep(data.trim().replace(/^#+\s*/, ""));
-        }
-      }
-    };
-    es.onerror = () => {
-      es.close();
+    // Live log by POLLING ./api/jobs/{id}/logtext — not SSE. Behind an Open
+    // OnDemand /rnode Apache reverse proxy a held-open EventSource is
+    // hazardous: the proxy hands the SSE buffer back as the body of concurrent
+    // sibling GETs, so a status fetch arrives as log text, JSON parsing fails,
+    // and a run that succeeded is reported "failed". One plain GET returning
+    // status + the whole log (tail-truncated server-side, under the proxy's
+    // ~43.5 KB ceiling) is proxy-safe. The pane is replaced wholesale on every
+    // poll and the step detector re-reads it; React drops the no-op updates.
+    // eventSourceRef keeps its contract — whoever holds it can still .close().
+    if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+    let timer = null, finished = false, errors = 0;
+    const handle = { close() { finished = true; if (timer) { clearTimeout(timer); timer = null; } } };
+    eventSourceRef.current = handle;
+    const finish = () => {
+      handle.close();
+      if (eventSourceRef.current === handle) eventSourceRef.current = null;
       setRunning(false);
-      setJobStatus("failed");
-      done();
+      fetch(`./api/jobs/${id}`)
+        .then((r) => r.json())
+        .then((job) => {
+          setJobStatus(job.status);
+          setCurrentStep("");
+          if (samp) {
+            loadSampleResults(samp.project, samp);
+            loadAmrTable(samp.project, samp);
+          }
+          loadProjects();
+          // The Results table is the place people now look for finished work,
+          // so it has to reflect the run that just ended.
+          results.reload();
+        })
+        .catch(() => {})
+        .finally(() => done());
     };
+    const tick = () => {
+      if (finished) return;
+      fetch(`./api/jobs/${id}/logtext`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`http ${r.status}`))))
+        .then((d) => {
+          if (finished) return;
+          errors = 0;
+          // The SSE route dropped blank lines; keep the pane looking the same.
+          const lines = (typeof d.log === "string" ? d.log.split("\n") : []).filter((l) => l.trim() !== "");
+          setLogLines(lines);
+          for (const data of lines) {
+            if (/Step \d+:/i.test(data) ||
+                /Resolving organism/i.test(data) ||
+                /AMRFinderPlus/i.test(data) ||
+                /Pipeline completed/i.test(data)) {
+              setCurrentStep(data.trim().replace(/^#+\s*/, ""));
+            }
+          }
+          if (d.status === "succeeded" || d.status === "failed") { finish(); return; }
+          timer = setTimeout(tick, 1500);
+        })
+        .catch(() => {
+          if (finished) return;
+          errors += 1;
+          // Ride out proxy blips. After ~80 s of nothing, ask the job record
+          // for the real outcome instead of guessing "failed" the way the old
+          // onerror handler had to.
+          if (errors < 40) { timer = setTimeout(tick, 2000); return; }
+          finish();
+        });
+    };
+    tick();
   }
 
   function browseDirs(path) {

@@ -78,7 +78,9 @@ ok "env builder: ${CONDA_FRONTEND}"
 ENV_FILE="${REPO_DIR}/conda_setup/environment.yml"
 if [[ ${USE_PERSONAL} -eq 1 ]]; then
   ENV_REF=("-n" "${PERSONAL_ENV_NAME}")
-  ENV_BIN="$("${CONDA}" run -n "${PERSONAL_ENV_NAME}" sh -c 'echo $CONDA_PREFIX/bin' 2>/dev/null || true)"
+  # ENV_BIN is NOT resolved here — see below the env-creation block. conda
+  # cannot report the prefix of an env that does not exist yet.
+  ENV_BIN=""
   ENV_DESC="personal env ${PERSONAL_ENV_NAME}"
   ENV_EXISTS=$("${CONDA}" env list | awk '{print $1}' | grep -qx "${PERSONAL_ENV_NAME}" && echo 1 || echo 0)
   CREATE_FLAG=("-n" "${PERSONAL_ENV_NAME}")
@@ -103,6 +105,28 @@ else
   run "${CONDA_FRONTEND}" env create "${CREATE_FLAG[@]}" -f "${ENV_FILE}"
 fi
 
+# Resolved AFTER the env exists. `conda run -n <name>` cannot answer for an env
+# that has not been created yet, and the `|| true` guarding it swallowed the
+# failure — so on a first-time install, or under bdtools' `install --fresh`
+# (which sets the old env aside before building), ENV_BIN came out empty,
+# PYTHON became "/python", and the run died inside the run() helper:
+#
+#     deploy/install.sh: line 40: /python: No such file or directory
+#
+# naming the helper rather than the cause. Observed 2026-09-15 while migrating
+# this env to native arm64. The shared-env branch above needs no second pass:
+# its ENV_BIN is a literal path, valid before the env is built.
+if [[ ${USE_PERSONAL} -eq 1 ]]; then
+  ENV_BIN="$("${CONDA}" run -n "${PERSONAL_ENV_NAME}" sh -c 'echo $CONDA_PREFIX/bin' 2>/dev/null || true)"
+fi
+if [[ -z "${ENV_BIN}" ]]; then
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    ENV_BIN="<${PERSONAL_ENV_NAME}>/bin"   # nothing was created; keep the preview readable
+  else
+    die "could not resolve the bin dir of ${ENV_DESC} after creating it.
+       Check:  ${CONDA} run -n ${PERSONAL_ENV_NAME} sh -c 'echo \$CONDA_PREFIX'"
+  fi
+fi
 PYTHON="${ENV_BIN}/python"
 # Put the env's bin on PATH for every tool call below. amrfinder needs its
 # BLAST+/HMMER deps on PATH, and the `mlst` check is a Perl script whose

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import "./App.css";
+import { askOnPage } from "./pageAsk.jsx";
 import ThemeToggle from "./ThemeToggle";
 import CitationFooter from "./Citations";
 import ResultsPane from "./ResultsPane";
@@ -207,7 +208,7 @@ export default function App() {
       });
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
-        window.alert(`Could not create project: ${detail.detail || res.status}`);
+        askOnPage({ notice: true, message: `Could not create project: ${detail.detail || res.status}` });
         return;
       }
       const created = await res.json().catch(() => ({}));
@@ -379,7 +380,7 @@ export default function App() {
   }
 
   async function deleteInput(name, filename) {
-    if (!window.confirm(`Remove ${filename} from this project's download/ folder?`)) return;
+    if (!(await askOnPage({ okLabel: "Remove", message: `Remove ${filename} from this project's download/ folder?` }))) return;
     try {
       await fetch(`./api/projects/${encodeURIComponent(name)}/inputs/${encodeURIComponent(filename)}`, { method: "DELETE" });
       await refreshAfterLoad(name);

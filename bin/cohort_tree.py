@@ -243,8 +243,29 @@ def layout(root: Node) -> List[Node]:
     return tips
 
 
-def prepared(text: str, outgroup: Optional[str] = None) -> Tuple[Node, List[Node], str]:
-    """Parse, root, ladderize and lay out a Newick tree in one call."""
+def drop_outgroup(root: Node, outgroup: str) -> Node:
+    """Take the outgroup tip off a tree rooted on it, leaving the ingroup.
+
+    The outgroup is what places the root; drawing it as well spends most of
+    the figure's width on the one long branch out to it and squeezes the
+    isolates, which are what the figure is for."""
+    rest = [c for c in root.children if not (c.is_tip and c.name == outgroup)]
+    if len(rest) == len(root.children) or not rest:
+        return root
+    if len(rest) == 1:
+        new_root = rest[0]
+        new_root.length = 0.0
+        return new_root
+    root.children = rest
+    return root
+
+
+def prepared(text: str, outgroup: Optional[str] = None,
+             keep_outgroup: bool = False) -> Tuple[Node, List[Node], str]:
+    """Parse, root, ladderize and lay out a Newick tree in one call. A tree
+    rooted on its outgroup has that tip removed unless keep_outgroup is set."""
     root, how = root_tree(parse_newick(text), outgroup)
+    if how == "outgroup" and outgroup and not keep_outgroup:
+        root = drop_outgroup(root, outgroup)
     ladderize(root)
     return root, layout(root), how

@@ -112,6 +112,9 @@ class ColumnGroup:
     # values[column] = {tip label: "full" | "low"}; a missing label is absent.
     values: Dict[str, Dict[str, str]] = field(default_factory=dict)
     low_color: Optional[str] = None
+    # Tip labels this block has results for. A tip outside it gets no squares
+    # at all, so a step that did not run cannot read as "absent". None: all.
+    known: Optional[set] = None
 
 
 def _scale_bar(span: float) -> float:
@@ -198,7 +201,7 @@ def tree_matrix(root: Node, tips: List[Node], tip_text: Dict[str, str],
                      f'font-size="10" fill="{INK}">{esc(c)}</text>')
             present = g.values.get(c, {})
             for t in tips:
-                if t.name not in tip_lineage:
+                if t.name not in tip_lineage or (g.known is not None and t.name not in g.known):
                     continue
                 state = present.get(t.name)
                 fill = g.color if state == "full" else (g.low_color or g.color) if state == "low" else EMPTY

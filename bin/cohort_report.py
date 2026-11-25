@@ -506,7 +506,7 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         figures["bars"] = fig.stacked_bars(grouped, palette, lineage_label,
                                            f"Lineage by {group_by}: {n} isolates, seven-gene MLST")
     if tips:
-        def block(title, color, cols, getter, low_getter=None, low_color=None):
+        def block(title, color, cols, getter, has_data, low_getter=None, low_color=None):
             values: Dict[str, Dict[str, str]] = {}
             for c in cols:
                 values[c] = {}
@@ -515,17 +515,17 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
                         values[c][iso.label] = "full"
                     elif low_getter is not None and c in low_getter(iso):
                         values[c][iso.label] = "low"
-            return fig.ColumnGroup(title, color, cols, values, low_color)
+            return fig.ColumnGroup(title, color, cols, values, low_color,
+                                   known={i.label for i in isolates if has_data(i)})
 
         blocks = [
-            block("Resistance", C_RESISTANCE, res_cols, lambda i: i.resistance),
+            block("Resistance", C_RESISTANCE, res_cols, lambda i: i.resistance, lambda i: i.has_amr),
             block("Plasmid replicons", C_REPLICON, rep_cols, lambda i: i.replicons,
-                  lambda i: i.replicons_low, C_REPLICON_LOW),
-            block("Virulence, variable", C_VIRULENCE, vir_cols, lambda i: i.virulence),
+                  lambda i: i.has_typing, lambda i: i.replicons_low, C_REPLICON_LOW),
+            block("Virulence, variable", C_VIRULENCE, vir_cols, lambda i: i.virulence,
+                  lambda i: i.has_typing),
         ]
         tip_text = {i.label: i.label for i in isolates}
-        if rooting == "outgroup" and outgroup not in tip_text:
-            tip_text[outgroup] = "reference"
         figures["tree"] = fig.tree_matrix(
             root, tips, tip_text, {i.label: i.lineage for i in isolates}, palette, lineage_label,
             [b for b in blocks if b.columns],
@@ -635,17 +635,17 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         parts.append(f'<div class="scroll">{figures["bars"]}</div>')
 
     if figures.get("tree"):
-        parts.append("<h2>Phylogeny and gene content</h2>")
-        parts.append(f'<div class="scroll">{figures["tree"]}</div>')
-        rooted = ("rooted on the reference" if rooting == "outgroup"
+        parts.append('<h2 class="newpage">Phylogeny and gene content</h2>')
+        parts.append(f'<div class="scroll figure">{figures["tree"]}</div>')
+        rooted = ("rooted with the reference as outgroup, which is not drawn" if rooting == "outgroup"
                   else "rooted at the midpoint of the longest tip-to-tip path")
         parts.append(
             f'<p class="small">Tree from vSNP Step 2 run {_e(step2.run_id)}, group {_e(step2.group)}, '
-            f'reference {_e(reference_name)}, {rooted}'
-            + (f'; the tip "{_e(outgroup)}" is the reference. ' if rooting == "outgroup" else ". ")
+            f'reference {_e(reference_name)}, {rooted}. '
             + f"{alignment_columns:,} SNP positions. Columns show what varies: determinants and "
               "virulence genes found in every isolate are left out and listed below. A paler "
-              "replicon square is a low-identity match.</p>")
+              "replicon square is a low-identity match. An isolate with no squares in a block has "
+              "no result for it.</p>")
         if res_all:
             parts.append(f'<p class="small">Resistance determinants in every isolate: {_e(", ".join(res_all))}.</p>')
         if vir_all:
@@ -655,7 +655,7 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         parts.append("<h2>Pairwise distances</h2>")
         parts.append(f"<p>Across {len(pair_values):,} pairs: minimum {min(pair_values):,}, median "
                      f"{statistics.median(pair_values):,.0f}, maximum {max(pair_values):,} SNPs.</p>")
-        parts.append(f'<div class="scroll">{figures["heat"]}</div>')
+        parts.append(f'<div class="scroll figure">{figures["heat"]}</div>')
         parts.append('<p class="small">These are reference-mapped SNPs from the vSNP Step 2 alignment, '
                      "after its position filters. A position where either isolate has no call or a "
                      "mixed call is not counted for that pair. They are not comparable with distances "
@@ -740,6 +740,10 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
     css = (_CSS + "\n@page{size:A4 landscape;margin:12mm}\n"
            "ul{margin:4px 0 8px 18px;padding:0} li{margin:2px 0}\n"
            "svg{max-width:100%;height:auto}\n"
+           # In print a figure is kept whole and scaled to fit one page, and the
+           # tree starts its own page so its heading stays with it.
+           "@media print{svg{max-height:158mm;width:auto} .figure{break-inside:avoid} "
+           "h2.newpage{break-before:page}}\n"
            "table.wide{font-size:9.5px} table.wide th,table.wide td{padding:3px 5px}\n"
            "h2{break-after:avoid} tr{break-inside:avoid}\n")
     doc = (f'<!doctype html><html><head><meta charset="utf-8"><title>{_e(title)}</title>'

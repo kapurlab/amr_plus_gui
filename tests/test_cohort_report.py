@@ -37,7 +37,8 @@ def test_bad_newick_is_refused(text):
 
 
 def test_rooting_on_the_reference_tip_hangs_everything_else_from_it():
-    root, tips, how = cohort_tree.prepared("((A:1,B:1):1,(C:1,root:2):1);", outgroup="root")
+    root, tips, how = cohort_tree.prepared("((A:1,B:1):1,(C:1,root:2):1);", outgroup="root",
+                                           keep_outgroup=True)
     assert how == "outgroup"
     reference = next(t for t in tips if t.name == "root")
     assert reference.x == 0.0                      # the root sits at the reference tip
@@ -45,6 +46,16 @@ def test_rooting_on_the_reference_tip_hangs_everything_else_from_it():
     assert depth["C"] == pytest.approx(3.0)        # 2 down the reference branch, 1 out to C
     assert depth["A"] == pytest.approx(5.0)
     assert sorted(t.y for t in tips) == [0.0, 1.0, 2.0, 3.0]
+
+
+def test_the_outgroup_places_the_root_and_is_then_left_out():
+    root, tips, how = cohort_tree.prepared("((A:1,B:1):1,(C:1,root:2):1);", outgroup="root")
+    assert how == "outgroup"
+    assert sorted(t.name for t in tips) == ["A", "B", "C"]
+    depth = {t.name: t.x for t in tips}
+    # The root is where the reference joined: C is 1 away, A and B are 3.
+    assert depth == {"C": pytest.approx(1.0), "A": pytest.approx(3.0), "B": pytest.approx(3.0)}
+    assert [t.name for t in tips][0] == "C"        # the lone tip is ladderized first
 
 
 def test_without_the_outgroup_the_root_is_at_the_midpoint():
@@ -190,6 +201,20 @@ def test_layers_that_do_not_line_up_are_reported(tmp_path):
         assert expected in problems, expected
     text = (project / "cohort_report" / "cohort_report.html").read_text(encoding="utf-8")
     assert "Check before using this report" in text
+
+
+def test_an_isolate_with_no_typing_gets_no_squares_in_the_typing_blocks():
+    root, tips, _ = cohort_tree.prepared("(A:1,B:1);")
+    group = cohort_figures.ColumnGroup("Plasmid replicons", "#4B4F9C", ["IncX1"],
+                                       {"IncX1": {"A": "full"}}, known={"A"})
+    def squares(g):
+        svg = cohort_figures.tree_matrix(root, tips, {"A": "A", "B": "B"}, {"A": "10", "B": "10"},
+                                         cohort_figures.lineage_palette(["10"]), {"10": "ST10"}, [g], "t")
+        # Matrix squares are the rounded rectangles; the block title shares the colour.
+        return svg.count('rx="2" fill="#4B4F9C"') + svg.count(f'rx="2" fill="{cohort_figures.EMPTY}"')
+    assert squares(group) == 1                       # A only: B has no result to draw
+    group.known = None
+    assert squares(group) == 2                       # with results for both, B is drawn as absent
 
 
 def test_a_serovar_disagreement_becomes_a_note_on_the_isolate(tmp_path):

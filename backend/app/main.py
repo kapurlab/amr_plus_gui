@@ -481,6 +481,26 @@ def api_project_link_local(name: str, payload: LinkLocalRequest):
     return JSONResponse({"linked": count})
 
 
+def _sample_metadata_step(project_dir: Path, accessions: List[str]) -> str:
+    """Shell text for the end of an SRA download: fill the project's metadata
+    sheet (<project>/sample_metadata.tsv) from the runs' public records.
+
+    build_download_script places it before the script's own `exit`; text
+    appended after the script would never run. `|| true`: the reads are what
+    was asked for, and a lookup that fails (no route to NCBI, a run too new to
+    be listed) must not turn a finished download into a failed job. The sheet
+    can be fetched again later."""
+    if not accessions:
+        return ""
+    return (
+        "# Public metadata for the downloaded runs -> <project>/sample_metadata.tsv\n"
+        'echo ""; echo "== Sample metadata =="\n'
+        f"{shlex.quote(sys.executable)} -u {shlex.quote(str(_BIN_DIR / 'sample_metadata.py'))} "
+        f"--project {shlex.quote(str(project_dir))} fetch --source sra "
+        f"--samples {' '.join(shlex.quote(a) for a in accessions)} || true\n"
+    )
+
+
 class SraRequest(BaseModel):
     accessions: List[str]
     folder: Optional[str] = None
@@ -507,21 +527,17 @@ def api_project_sra_download(name: str, payload: SraRequest):
         write_crosswalk_tsv(download_root, mapping)
     except OSError as e:
         logger.warning("Failed to write sra_crosswalk.tsv: %s", e)
-    script = build_download_script(download_root, expanded, allow_insecure_https=False)
-    # Then fill the project's metadata sheet from the runs' public records.
-    # "|| true": the reads are what was asked for, and a metadata lookup that
-    # fails (no network to NCBI, a run too new to be listed) must not turn a
-    # finished download into a failed job. The sheet can be fetched again later.
-    script += (
-        "\n# Public metadata for the downloaded runs -> <project>/sample_metadata.tsv\n"
-        f"{shlex.quote(sys.executable)} -u {shlex.quote(str(_BIN_DIR / 'sample_metadata.py'))} "
-        f"--project {shlex.quote(str(project_dir))} fetch --source sra "
-        f"--samples {' '.join(shlex.quote(a) for a in expanded)} || true\n"
-    )
+    script = build_download_script(download_root, expanded, allow_insecure_https=False,
+                                   after_download=_sample_metadata_step(project_dir, expanded))
     script_path = download_root / "download_sra.sh"
     script_path.write_text(script, encoding="utf-8")
     script_path.chmod(0o755)
     env = {"PATH": os.environ.get("PATH", "")}
+    # The NCBI contact goes to the job through its environment, never into the
+    # script, so it does not end up in a file under the project.
+    for key in ("NCBI_EMAIL", "NCBI_API_KEY"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
     job_id = job_manager.start_job(
         name=f"sra_download — {name}",
         command=["bash", str(script_path)],

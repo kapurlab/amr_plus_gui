@@ -39,6 +39,9 @@ Authoritative build spec: `SPEC_BUILD.md`.
     src/App.css    theme — copied verbatim from Kraken; DO NOT restyle
     vite.config.js base: "./" — DO NOT CHANGE
     dist/          built output served by uvicorn (rebuild after edits)
+    sample_metadata.py the project's metadata sheet (sample_metadata.tsv),
+                       filled from pluggable sources: public run records
+                       (NCBI BioSample, ENA) or a sheet the lab already has
     cohort_report.py   one report across a project's finished samples ->
                        <project>/cohort_report/ (HTML, PDF, table, checks)
     cohort_tree.py     Newick reading, rooting and layout for that report
@@ -112,6 +115,18 @@ per-isolate table, and `cohort_checks.json` records where the layers do not
 line up (an isolate with no typing, a tree tip with no isolate, a metadata row
 with no results). Display names are taken from the metadata column that matches
 the tree's tips, so a vSNP metadata rename needs no extra setting.
+
+### 9. One metadata sheet per project, filled from any source
+`<project>/sample_metadata.tsv` has a `sample` column and any other columns.
+Nothing else about it is fixed, so it serves any organism and any tool that
+reads the project folder. `bin/sample_metadata.py` fills it from sources: `sra`
+(every attribute of each run's BioSample, kept under its own name) and `import`
+(any sheet; the sample column is found by matching). A new source is one class
+with `applies` and `fetch`, registered in `SOURCES`. Merging keeps what is
+already in the sheet: a source fills blanks and adds columns, and a value it
+disagrees with is listed, never overwritten. `sample_metadata.provenance.json`
+records which source filled each column. An SRA download runs the fetch for its
+runs when the reads finish, and a failed lookup never fails the download.
 
 ## Development Workflow
 

@@ -9,10 +9,13 @@ import { useEffect, useRef, useState } from "react";
    OnDemand proxy. */
 export default function CohortReport({ project, sampleCount = 0 }) {
   const [state, setState] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [fetching, setFetching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const timer = useRef(null);
   const base = `./api/projects/${encodeURIComponent(project || "")}/cohort-report`;
+  const metaBase = `./api/projects/${encodeURIComponent(project || "")}/sample-metadata`;
 
   async function load() {
     if (!project) return;
@@ -24,10 +27,16 @@ export default function CohortReport({ project, sampleCount = 0 }) {
     } catch (e) {
       setError(e.message || String(e));
     }
+    try {
+      const res = await fetch(metaBase);
+      if (res.ok) setMeta(await res.json());
+    } catch (e) { /* the sheet's status is a convenience; the report still works */ }
   }
 
   useEffect(() => {
     setState(null);
+    setMeta(null);
+    setFetching(false);
     setBusy(false);
     setError("");
     load();
@@ -35,18 +44,33 @@ export default function CohortReport({ project, sampleCount = 0 }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project]);
 
-  function watch(jobId) {
+  function watch(jobId, done, what) {
     timer.current = setTimeout(async () => {
       try {
         const job = await (await fetch(`./api/jobs/${jobId}`)).json();
-        if (job.status === "running" || job.status === "queued") return watch(jobId);
-        setBusy(false);
-        if (job.status !== "succeeded") setError("The report job did not finish. See the Pipeline Log.");
+        if (job.status === "running" || job.status === "queued") return watch(jobId, done, what);
+        done(false);
+        if (job.status !== "succeeded") setError(`The ${what} job did not finish. See the Pipeline Log.`);
         load();
       } catch (e) {
-        watch(jobId);   // a dropped poll is not a failed job
+        watch(jobId, done, what);   // a dropped poll is not a failed job
       }
     }, 2000);
+  }
+
+  // Fill the project's metadata sheet from the samples' public records.
+  async function fetchMetadata() {
+    setFetching(true);
+    setError("");
+    try {
+      const res = await fetch(`${metaBase}/fetch?source=sra`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      watch(data.job_id, setFetching, "metadata");
+    } catch (e) {
+      setFetching(false);
+      setError(e.message || String(e));
+    }
   }
 
   async function build() {
@@ -56,7 +80,7 @@ export default function CohortReport({ project, sampleCount = 0 }) {
       const res = await fetch(base, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || res.statusText);
-      watch(data.job_id);
+      watch(data.job_id, setBusy, "report");
     } catch (e) {
       setBusy(false);
       setError(e.message || String(e));
@@ -73,7 +97,11 @@ export default function CohortReport({ project, sampleCount = 0 }) {
       <div className="panel-header">
         <h2>Cohort report</h2>
         <div className="panel-actions">
-          <button className="ghost action" onClick={build} disabled={busy || sampleCount === 0}
+          <button className="ghost action" onClick={fetchMetadata} disabled={fetching || busy}
+                  title="Look up public records for samples named by an SRA, ENA or DDBJ run accession and add them to this project's sample_metadata.tsv. Values already in the sheet are kept.">
+            {fetching ? "Fetching…" : "Fetch public metadata"}
+          </button>
+          <button className="ghost action" onClick={build} disabled={busy || fetching || sampleCount === 0}
                   title="Build one report for every finished sample in this project">
             {busy ? "Building…" : state?.exists ? "↻ Rebuild" : "Build cohort report"}
           </button>
@@ -82,8 +110,13 @@ export default function CohortReport({ project, sampleCount = 0 }) {
       <div className="note">
         One report for every finished sample in this project: serovar and lineage, resistance,
         plasmid replicons and virulence, with the vSNP Step 2 tree and SNP distances when this
-        project has a Step 2 run. Display names and groups come from a <code>sample_crosswalk.tsv</code> or{" "}
-        <code>metadata</code> sheet in the project folder.
+        project has a Step 2 run. Display names and groups come from the project's{" "}
+        <code>sample_metadata.tsv</code>.
+      </div>
+      <div className="note">
+        {meta?.exists
+          ? `Metadata sheet: ${meta.rows} sample(s), ${meta.columns.length} column(s).`
+          : "No metadata sheet yet. Fetch public metadata for SRA runs, or put a sample_metadata.tsv with a sample column in the project folder."}
       </div>
       {error && <div className="note" style={{ color: "var(--danger, #C46A6A)" }}>{error}</div>}
       {!state?.exists && !busy && !error && (

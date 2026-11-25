@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -507,6 +508,16 @@ def api_project_sra_download(name: str, payload: SraRequest):
     except OSError as e:
         logger.warning("Failed to write sra_crosswalk.tsv: %s", e)
     script = build_download_script(download_root, expanded, allow_insecure_https=False)
+    # Then fill the project's metadata sheet from the runs' public records.
+    # "|| true": the reads are what was asked for, and a metadata lookup that
+    # fails (no network to NCBI, a run too new to be listed) must not turn a
+    # finished download into a failed job. The sheet can be fetched again later.
+    script += (
+        "\n# Public metadata for the downloaded runs -> <project>/sample_metadata.tsv\n"
+        f"{shlex.quote(sys.executable)} -u {shlex.quote(str(_BIN_DIR / 'sample_metadata.py'))} "
+        f"--project {shlex.quote(str(project_dir))} fetch --source sra "
+        f"--samples {' '.join(shlex.quote(a) for a in expanded)} || true\n"
+    )
     script_path = download_root / "download_sra.sh"
     script_path.write_text(script, encoding="utf-8")
     script_path.chmod(0o755)
@@ -1249,6 +1260,50 @@ _COHORT_FILE_LABELS = [
     ("cohort_table.tsv", "Per-isolate table (TSV)"),
     ("cohort_checks.json", "Checks (JSON)"),
 ]
+
+
+@app.get("/api/projects/{name}/sample-metadata")
+def api_sample_metadata_status(name: str):
+    """What the project's metadata sheet holds, and where its columns came from."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    sheet = project_dir / "sample_metadata.tsv"
+    columns: List[str] = []
+    rows = 0
+    if sheet.is_file():
+        try:
+            lines = [ln for ln in sheet.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+            columns = lines[0].split("\t") if lines else []
+            rows = max(0, len(lines) - 1)
+        except OSError:
+            pass
+    provenance: Dict[str, Any] = {}
+    try:
+        provenance = json.loads((project_dir / "sample_metadata.provenance.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    return JSONResponse({"project": name, "exists": sheet.is_file(), "path": str(sheet),
+                         "columns": columns, "rows": rows,
+                         "column_sources": provenance.get("columns", {}),
+                         "history": (provenance.get("history") or [])[-5:]})
+
+
+@app.post("/api/projects/{name}/sample-metadata/fetch")
+def api_sample_metadata_fetch(name: str, source: str = Query("sra")):
+    """Start a job that fills the project's metadata sheet from a source."""
+    project_dir = _writable_project_dir(name)
+    if not re.fullmatch(r"[a-z0-9_]+", source or ""):
+        raise HTTPException(400, "Unknown metadata source.")
+    command = [sys.executable, "-u", str(_BIN_DIR / "sample_metadata.py"),
+               "--project", str(project_dir), "fetch", "--source", source]
+    env = {"PYTHONPATH": str(_BIN_DIR), "PATH": os.environ.get("PATH", ""), "PYTHONUNBUFFERED": "1"}
+    for key in ("NCBI_EMAIL", "NCBI_API_KEY"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    job_id = job_manager.start_job(name=f"{name} — sample metadata ({source})", command=command,
+                                   cwd=project_dir, env=env)
+    return JSONResponse({"job_id": job_id})
 
 
 @app.get("/api/projects/{name}/cohort-report")

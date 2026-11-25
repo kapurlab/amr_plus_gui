@@ -7,7 +7,8 @@ single isolate:
 
   <project>/amr/<sample>/      this tool's per-isolate results (organism,
                                MLST, AMRFinderPlus, typing.json, assembly QC)
-  a metadata sheet             display names and grouping columns (optional)
+  <project>/sample_metadata.tsv   display names and grouping columns
+                               (optional; see sample_metadata.py)
   <project>/step2/<run>/...    the newest vSNP Step 2 tree and SNP alignment
                                (optional)
 
@@ -59,7 +60,8 @@ C_VIRULENCE = "#3FA796"
 # The tip vSNP adds for the reference sequence.
 VSNP_REFERENCE_TIP = "root"
 # Metadata columns tried, in order, as the grouping column when none is named.
-GROUP_COLUMN_GUESSES = ("state", "group", "region", "province", "country", "source")
+GROUP_COLUMN_GUESSES = ("state", "geo_region", "group", "region", "province", "country",
+                        "geo_country", "source", "isolation_source")
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +218,10 @@ def read_table(path: Path) -> Tuple[List[str], List[Dict[str, str]]]:
 
 
 def find_metadata(project: Path) -> Optional[Path]:
-    for name in ("sample_crosswalk.tsv", "metadata.tsv", "metadata.csv", "metadata.xlsx"):
+    """The project's own sheet (sample_metadata.py keeps it) first, then the
+    older names a sheet may have been dropped in under."""
+    for name in ("sample_metadata.tsv", "sample_crosswalk.tsv", "metadata.tsv", "metadata.csv",
+                 "metadata.xlsx"):
         for folder in (project, project / "download"):
             if (folder / name).is_file():
                 return folder / name
@@ -231,6 +236,38 @@ def best_column(header: List[str], rows: List[Dict[str, str]], wanted: set) -> T
         if n > hits:
             best, hits = col, n
     return best, hits
+
+
+def informative_columns(columns: List[str], isolates: List["Isolate"]) -> Tuple[List[str], Dict[str, str], Dict[str, str]]:
+    """Sort a sheet's columns for the printed table: (shown, constant, duplicate).
+
+    A metadata sheet filled from public records can be thirty columns wide, and
+    most of it says the same thing on every row. So a column is shown only when
+    it tells isolates apart:
+      constant   every isolate that has a value has the same one -> {column: value},
+                 stated once under the table;
+      duplicate  the same values, row for row, as the isolate name, the sample
+                 name or an earlier column -> {column: the one it repeats};
+      empty      no values at all -> dropped.
+    The table files (TSV, Excel) always carry every column."""
+    seen: Dict[tuple, str] = {tuple(i.label for i in isolates): "Isolate",
+                              tuple(i.sample for i in isolates): "Sample"}
+    shown: List[str] = []
+    constant: Dict[str, str] = {}
+    duplicate: Dict[str, str] = {}
+    for col in columns:
+        values = tuple((i.meta.get(col) or "").strip() for i in isolates)
+        distinct = {v for v in values if v}
+        if not distinct:
+            continue
+        if len(distinct) == 1 and len(isolates) > 1:
+            constant[col] = next(iter(distinct))
+        elif values in seen:
+            duplicate[col] = seen[values]
+        else:
+            seen[values] = col
+            shown.append(col)
+    return shown, constant, duplicate
 
 
 # ---------------------------------------------------------------------------
@@ -652,7 +689,7 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
             parts.append(f'<p class="small">{len(vir_all)} virulence genes are in every typed isolate '
                          "and are not drawn.</p>")
     if figures.get("heat"):
-        parts.append("<h2>Pairwise distances</h2>")
+        parts.append('<h2 class="newpage">Pairwise distances</h2>')
         parts.append(f"<p>Across {len(pair_values):,} pairs: minimum {min(pair_values):,}, median "
                      f"{statistics.median(pair_values):,.0f}, maximum {max(pair_values):,} SNPs.</p>")
         parts.append(f'<div class="scroll figure">{figures["heat"]}</div>')
@@ -706,10 +743,18 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
     parts.append("<h2>Per isolate results</h2>")
     parts.append(html_table([0] + list(range(n_meta, len(table_header)))))
     if meta_cols:
+        shown, constant, duplicate = informative_columns(meta_cols, order_for_table)
         parts.append("<h2>Isolates and metadata</h2>")
-        parts.append(html_table(list(range(n_meta))))
+        parts.append(html_table([0, 1] + [2 + meta_cols.index(c) for c in shown]))
         parts.append(f'<p class="small">Metadata as given in {_e(Path(metadata).name)}. Rows are in '
-                     "tree order where the isolate is in the tree.</p>")
+                     "tree order where the isolate is in the tree. Only columns that tell isolates "
+                     "apart are printed; cohort_table.tsv has every column.</p>")
+        if constant:
+            parts.append('<p class="small">The same for every isolate: '
+                         + _e("; ".join(f"{k} = {v}" for k, v in constant.items())) + ".</p>")
+        if duplicate:
+            parts.append('<p class="small">Columns that repeat another, not printed: '
+                         + _e("; ".join(f"{k} (same as {v})" for k, v in duplicate.items())) + ".</p>")
     if res_all:
         parts.append(f'<p class="small">The resistance column leaves out what is in every isolate: '
                      f'{_e(", ".join(res_all))}.</p>')
@@ -793,8 +838,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Build the cohort report for a project.")
     ap.add_argument("--project", type=Path, required=True)
     ap.add_argument("--metadata", type=Path, default=None,
-                    help="metadata sheet (.tsv, .csv, .xlsx); default: sample_crosswalk.tsv or "
-                         "metadata.* in the project or its download folder")
+                    help="metadata sheet (.tsv, .csv, .xlsx); default: the project's "
+                         "sample_metadata.tsv, else sample_crosswalk.tsv or metadata.*")
     ap.add_argument("--group-by", default=None, help="metadata column for the lineage chart")
     ap.add_argument("--label-column", default=None,
                     help="metadata column holding display names; default: the column matching the tree's tips")

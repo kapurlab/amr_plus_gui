@@ -226,6 +226,19 @@ def test_a_serovar_disagreement_becomes_a_note_on_the_isolate(tmp_path):
     assert "agree on 3 of 4 typed isolates" in " ".join(result["summary"])
 
 
+def test_only_columns_that_tell_isolates_apart_are_printed():
+    isolates = [cohort_report.Isolate(sample=s, label=l, meta=m) for s, l, m in [
+        ("R1", "ISO-1", {"run": "R1", "strain": "ISO-1", "organism": "S. enterica", "state": "PR", "region": "PR", "host": ""}),
+        ("R2", "ISO-2", {"run": "R2", "strain": "ISO-2", "organism": "S. enterica", "state": "SP", "region": "SP", "host": ""}),
+        ("R3", "ISO-3", {"run": "R3", "strain": "ISO-3", "organism": "S. enterica", "state": "SP", "region": "SP", "host": ""}),
+    ]]
+    shown, constant, duplicate = cohort_report.informative_columns(
+        ["run", "strain", "organism", "state", "region", "host"], isolates)
+    assert shown == ["state"]
+    assert constant == {"organism": "S. enterica"}
+    assert duplicate == {"run": "Sample", "strain": "Isolate", "region": "state"}
+
+
 def test_no_results_at_all_is_an_error(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(SystemExit):

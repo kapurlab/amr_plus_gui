@@ -27,6 +27,9 @@ class Node:
     # Filled by layout(): distance from the root, and the row the node sits on.
     x: float = 0.0
     y: float = 0.0
+    # How much of the branch a drawing leaves out (see shorten_long_branches).
+    # `length` stays the true length.
+    cut: float = 0.0
 
     @property
     def is_tip(self) -> bool:
@@ -223,13 +226,13 @@ def ladderize(node: Node) -> Node:
 
 
 def layout(root: Node) -> List[Node]:
-    """Set x (distance from the root) and y (row) on every node. Tips take
-    rows 0, 1, 2, ... top to bottom; an internal node sits midway between its
-    first and last child. Returns the tips in row order."""
+    """Set x (drawn distance from the root) and y (row) on every node. Tips
+    take rows 0, 1, 2, ... top to bottom; an internal node sits midway between
+    its first and last child. Returns the tips in row order."""
     tips: List[Node] = []
 
     def place(n: Node, x: float) -> None:
-        n.x = x + n.length
+        n.x = x + n.length - n.cut
         if n.is_tip:
             n.y = float(len(tips))
             tips.append(n)
@@ -260,12 +263,60 @@ def drop_outgroup(root: Node, outgroup: str) -> Node:
     return root
 
 
+# A branch this many times deeper than everything else in the tree is drawn
+# shortened, to this share of that depth.
+LONG_BRANCH_FACTOR = 5.0
+LONG_BRANCH_DRAWN = 0.5
+
+
+def _nodes(root: Node) -> List[Node]:
+    out = [root]
+    for child in root.children:
+        out.extend(_nodes(child))
+    return out
+
+
+def _drawn_depth(n: Node, ignore: Node) -> float:
+    """Longest drawn path from n down to a tip, with one branch counted as 0."""
+    below = max((_drawn_depth(c, ignore) for c in n.children), default=0.0)
+    return below + (0.0 if n is ignore else n.length - n.cut)
+
+
+def shorten_long_branches(root: Node) -> List[Node]:
+    """Mark the branches that would flatten the rest of the tree.
+
+    One isolate far from the others (another lineage, or a mislabelled
+    record) takes the whole width of a drawing and leaves every other branch
+    too short to see. A branch more than LONG_BRANCH_FACTOR times the depth of
+    the rest of the tree gets a `cut`, so layout() draws it short. Its true
+    `length` is untouched. Returns the marked nodes, longest first."""
+    marked: List[Node] = []
+    below_root = [n for n in _nodes(root) if n is not root]
+    for _ in range(3):
+        longest = max((n for n in below_root if not n.cut), key=lambda n: n.length, default=None)
+        if longest is None or longest.length <= 0:
+            break
+        rest = max((_drawn_depth(c, longest) for c in root.children), default=0.0)
+        if rest <= 0 or longest.length <= LONG_BRANCH_FACTOR * rest:
+            break
+        longest.cut = longest.length - LONG_BRANCH_DRAWN * rest
+        marked.append(longest)
+    return marked
+
+
+def cut_branches(root: Node) -> List[Node]:
+    """The nodes whose branch is drawn shortened, longest first."""
+    return sorted((n for n in _nodes(root) if n.cut), key=lambda n: -n.length)
+
+
 def prepared(text: str, outgroup: Optional[str] = None,
              keep_outgroup: bool = False) -> Tuple[Node, List[Node], str]:
     """Parse, root, ladderize and lay out a Newick tree in one call. A tree
-    rooted on its outgroup has that tip removed unless keep_outgroup is set."""
+    rooted on its outgroup has that tip removed unless keep_outgroup is set.
+    A branch far longer than the rest of the tree is laid out shortened."""
     root, how = root_tree(parse_newick(text), outgroup)
     if how == "outgroup" and outgroup and not keep_outgroup:
         root = drop_outgroup(root, outgroup)
     ladderize(root)
+    shorten_long_branches(root)
     return root, layout(root), how

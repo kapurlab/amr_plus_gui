@@ -72,6 +72,32 @@ def test_ladderize_puts_the_smaller_clade_first():
     assert [t.name for t in tips][0] == "D"
 
 
+def test_a_branch_far_longer_than_the_rest_is_drawn_short_and_keeps_its_length():
+    text = "(((A:0.001,B:0.002):0.001,C:0.002):0.001,FAR:3.5,root:0.001);"
+    root, tips, _ = cohort_tree.prepared(text, outgroup="root")
+    far = next(t for t in tips if t.name == "FAR")
+    assert far.length == pytest.approx(3.5)
+    assert [n.name for n in cohort_tree.cut_branches(root)] == ["FAR"]
+    rest = max(t.x for t in tips if t.name != "FAR")
+    # The far tip no longer sets the scale: it sits within the depth of the rest.
+    assert far.x == pytest.approx(cohort_tree.LONG_BRANCH_DRAWN * rest)
+    svg = cohort_figures.tree_matrix(root, tips, {t.name: t.name for t in tips}, {}, {}, {}, [], "t", "subs")
+    assert ">3.5<" in svg
+
+
+def test_an_ordinary_tree_has_no_shortened_branch():
+    root, tips, _ = cohort_tree.prepared("(((A:1,B:1):1,C:1):1,D:9);")
+    assert cohort_tree.cut_branches(root) == []
+    assert max(t.x for t in tips) == pytest.approx(6.0)
+
+
+def test_a_far_clade_is_shortened_on_its_stem():
+    text = "((A:0.001,B:0.002):0.001,(X:0.001,Y:0.001):2.0,root:0.001);"
+    root, tips, _ = cohort_tree.prepared(text, outgroup="root")
+    (stem,) = cohort_tree.cut_branches(root)
+    assert sorted(t.name for t in stem.tips()) == ["X", "Y"]
+
+
 # ---------------------------------------------------------------------------
 # Distances
 # ---------------------------------------------------------------------------
@@ -278,6 +304,26 @@ def test_colour_and_charts_follow_the_chosen_metadata_fields(tmp_path):
     # The choices are remembered and used by the next build that names none.
     again = cohort_report.build(project, make_pdf=False, log=lambda _m: None)
     assert again["color_by"] == "Herd" and again["group_by"] == ["collected|year", "mlst"]
+
+
+def test_every_year_gets_its_own_bar(tmp_path):
+    project = tmp_path / "years"
+    rows = ["run\tcollected"]
+    for k in range(10):
+        _isolate(project, f"S{k}", "10")
+        rows.append(f"S{k}\t{2010 + k}-03-01")
+    (project / "sample_crosswalk.tsv").write_text("\n".join(rows) + "\n")
+    settings = cohort_report.Settings(group_by=["collected|year"])
+    cohort_report.build(project, settings, make_pdf=False, log=lambda _m: None)
+    text = (project / "cohort_report" / "cohort_report.html").read_text(encoding="utf-8")
+    # Ten years is more than the number of values a chart of names keeps apart.
+    assert 10 > cohort_report.MAX_CATEGORIES
+    assert all(f">{2010 + k}<" in text for k in range(10))
+
+
+def test_markup_in_a_gene_name_is_not_printed():
+    from reporting import gene_names
+    assert gene_names([{"gene": "tre<up>Tu</up>"}, {"gene": "invA"}]) == ["treTu", "invA"]
 
 
 def test_a_chosen_field_that_is_not_there_is_reported_not_guessed(tmp_path):

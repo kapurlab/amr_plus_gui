@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -166,7 +167,8 @@ def gene_names(hits: Optional[List[Dict[str, Any]]], low_identity: Optional[bool
             continue
         if low_identity is not None and bool(hit.get("low_identity")) != low_identity:
             continue
-        name = str(hit.get("gene") or "").strip()
+        # VFDB writes a superscript into a few names as markup: tre<up>Tu</up>.
+        name = re.sub(r"</?[A-Za-z]+>", "", str(hit.get("gene") or "")).strip()
         if name and name not in seen:
             seen.append(name)
     return seen

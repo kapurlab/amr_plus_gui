@@ -151,7 +151,8 @@ def tree_matrix(root: Node, tips: List[Node], tip_text: Dict[str, str],
 
     tip_text maps a tip's name to the label drawn; a tip missing from it is
     drawn in grey with its own name (the reference, or a sample the report has
-    no typing for). tip_lineage maps a tip's name to its lineage key."""
+    no typing for). tip_lineage maps a tip's name to its lineage key. A branch
+    with a `cut` is drawn at its shortened length with a break mark."""
     row, cell, gap = 15, 12, 3
     tree_w = 250
     labels = {t.name: tip_text.get(t.name, t.name) for t in tips}
@@ -183,9 +184,18 @@ def tree_matrix(root: Node, tips: List[Node], tip_text: Dict[str, str],
                      f'height="{row}" fill="#F7F6F3"/>')
 
     def draw(n: Node) -> None:
-        x1 = left + (n.x - n.length) * sx
+        x1 = left + (n.x - (n.length - n.cut)) * sx
         x2 = left + n.x * sx
         p.append(f'<line x1="{x1:.1f}" y1="{yy(n.y):.1f}" x2="{x2:.1f}" y2="{yy(n.y):.1f}" stroke="{INK}" stroke-width="1"/>')
+        if n.cut:
+            # A shortened branch: a break across it and its true length above.
+            xm, y = (x1 + x2) / 2, yy(n.y)
+            p.append(f'<rect x="{xm - 2.5:.1f}" y="{y - 2:.1f}" width="5" height="4" fill="#fff"/>')
+            for dx in (-2.5, 2.5):
+                p.append(f'<line x1="{xm + dx - 1.5:.1f}" y1="{y + 4:.1f}" x2="{xm + dx + 1.5:.1f}" '
+                         f'y2="{y - 4:.1f}" stroke="{INK}" stroke-width="1"/>')
+            p.append(f'<text x="{xm:.1f}" y="{y - 5.5:.1f}" font-size="8.5" text-anchor="middle" '
+                     f'fill="{MUTED}">{n.length:.3g}</text>')
         if n.is_tip:
             p.append(f'<line x1="{x2:.1f}" y1="{yy(n.y):.1f}" x2="{x_label - 6:.1f}" y2="{yy(n.y):.1f}" '
                      f'stroke="{GRID}" stroke-width="1" stroke-dasharray="1 3"/>')

@@ -535,6 +535,19 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
             except OSError as exc:
                 problems.append(f"The alignment {step2.alignment_path.name} could not be read: {exc}")
     tip_names = [t.name for t in tips] if tips else []
+    long_branches: List[Dict[str, Any]] = []
+    if root is not None:
+        for node in cohort_tree.cut_branches(root):
+            under = [t.name for t in node.tips()]
+            who = under[0] if len(under) == 1 else (
+                f"the {len(under)} isolates " + ", ".join(under[:4]) + (" …" if len(under) > 4 else ""))
+            drawn = node.length - node.cut
+            times = node.length * cohort_tree.LONG_BRANCH_DRAWN / drawn if drawn > 0 else 0.0
+            long_branches.append({"tips": under, "length": node.length, "times_rest_of_tree": round(times, 1)})
+            info.append(f"The branch to {who} is {node.length:.3g} substitutions per site, "
+                        f"{times:,.0f} times the depth of the rest of the tree. It is drawn shortened, "
+                        "with a break mark and its length, so that the other branches can be seen. "
+                        "Distances and the iTOL files keep its full length.")
 
     # ---- metadata: sample column, label column, grouping column ----
     metadata = metadata or find_metadata(project)
@@ -709,7 +722,10 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
     figures: Dict[str, str] = {}
     bar_figures: List[str] = []
     for spec in group_specs:
-        group_of, _ = pooled({i.label: field_value(i, spec) for i in isolates})
+        group_of = {i.label: field_value(i, spec) for i in isolates}
+        if not spec.endswith("|year"):
+            # Years are an axis: every year gets its bar, in order.
+            group_of, _ = pooled(group_of)
         grouped: Dict[str, Dict[str, int]] = {}
         for iso in isolates:
             g = group_of[iso.label] or missing_text(spec)
@@ -866,6 +882,8 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
         parts.append(
             f'<p class="small">Tree from {_e(tree_from)}, {rooted}. '
             + (f"{alignment_columns:,} alignment positions. " if alignment_columns else "")
+            + (("1 branch is" if len(long_branches) == 1 else f"{len(long_branches)} branches are")
+               + " drawn shortened, marked with a break and the true length. " if long_branches else "")
             + (f"The square beside each name is its {_e(color_name)}. " if color_spec else "")
             + "Columns show what varies: determinants and "
               "virulence genes found in every isolate are left out and listed below. A paler "
@@ -1105,7 +1123,7 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
         "metadata": str(metadata) if metadata else None, "label_column": label_column,
         "color_by": color_spec, "group_by": group_specs, "settings": asdict(settings),
         "fields": list_fields(isolates, meta_cols + ([label_column] if label_column else [])),
-        "rooting": rooting, "alignment_columns": alignment_columns,
+        "rooting": rooting, "long_branches": long_branches, "alignment_columns": alignment_columns,
         "pairs": len(pair_values), "problems": problems, "info": info, "summary": summary,
         "with_acquired_resistance": len(with_acquired), "pdf": pdf_ok, "itol": itol_files,
         "files": sorted(p.name for p in outdir.iterdir() if p.is_file()),

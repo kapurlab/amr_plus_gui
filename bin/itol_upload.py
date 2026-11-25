@@ -16,7 +16,8 @@ zip. They go to itol.embl.de, into the account the API key belongs to. Nothing
 is sent unless this script is run, and it is run only when a person asks.
 
 The API key is read from the ITOL_API_KEY environment variable and from
-nowhere else. It is never taken as an argument, printed, or written to a file.
+nowhere else. It is never taken as an argument, printed, or written to a file,
+and it is removed from iTOL's reply, which can quote it back in an error.
 iTOL needs a subscription for batch upload, and the project must already exist
 in the account. Each upload makes a new tree; it does not replace an earlier
 one.
@@ -159,7 +160,16 @@ def upload(zip_bytes: bytes, api_key: str, itol_project: str, tree_name: str,
         return Outcome(False, message=f"Could not reach iTOL: {exc.reason}")
     except (TimeoutError, OSError) as exc:
         return Outcome(False, message=f"Could not reach iTOL: {exc}")
-    return parse_response(text)
+    # iTOL can quote the key back in an error. It goes no further than here.
+    return _without_key(parse_response(text), api_key.strip())
+
+
+def _without_key(outcome: Outcome, api_key: str) -> Outcome:
+    """The same outcome with the API key removed from anything iTOL said."""
+    if api_key:
+        outcome.message = outcome.message.replace(api_key, "(your key)")
+        outcome.warnings = [w.replace(api_key, "(your key)") for w in outcome.warnings]
+    return outcome
 
 
 def send_report(project: Path, api_key: str, itol_project: str, tree_name: str = "",

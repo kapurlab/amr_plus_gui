@@ -127,6 +127,18 @@ def test_a_failed_upload_leaves_no_record_and_says_why(tmp_path):
     assert not (project / "cohort_report" / "itol_upload.json").exists()
 
 
+def test_a_key_quoted_back_by_itol_is_removed(tmp_path):
+    project = _report(tmp_path)
+    said = f"ERR 0: No valid subscription detected for API key {KEY}. Please check the account."
+    outcome = itol_upload.send_report(project, KEY, "Salmonella", http_post=lambda *_a: said)
+    assert not outcome.ok and KEY not in outcome.message
+    assert "No valid subscription detected for API key (your key)" in outcome.message
+    warned = itol_upload.send_report(project, KEY, "Salmonella",
+                                     http_post=lambda *_a: f"Warning: key {KEY} is odd\nSUCCESS: 7\n")
+    assert warned.ok and KEY not in " ".join(warned.warnings)
+    assert KEY not in (project / "cohort_report" / "itol_upload.json").read_text()
+
+
 def test_an_unverified_certificate_stops_the_upload(tmp_path):
     project = _report(tmp_path)
 

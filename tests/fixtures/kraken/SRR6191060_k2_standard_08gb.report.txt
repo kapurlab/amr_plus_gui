@@ -1,0 +1,39 @@
+ 24.97	379536	379536	U	0	unclassified
+ 75.03	1140642	22306	R	1	root
+ 73.57	1118329	67	R1	131567	  cellular organisms
+ 73.56	1118207	10492	D	2	    Bacteria
+ 72.82	1107040	750	K	3379134	      Pseudomonadati
+ 72.68	1104925	1747	P	1224	        Pseudomonadota
+ 72.55	1102869	14450	C	1236	          Gammaproteobacteria
+ 71.58	1088140	23284	O	91347	            Enterobacterales
+ 70.02	1064415	93093	F	543	              Enterobacteriaceae
+ 63.21	960931	938753	G	590	                Salmonella
+  1.41	21431	9643	S	28901	                  Salmonella enterica
+  0.72	10965	4816	S1	59201	                    Salmonella enterica subsp. enterica
+  0.07	1070	949	S2	149539	                      Salmonella enterica subsp. enterica serovar Enteritidis
+  0.05	695	551	S2	90371	                      Salmonella enterica subsp. enterica serovar Typhimurium
+  0.02	370	233	S2	98360	                      Salmonella enterica subsp. enterica serovar Dublin
+  0.02	308	154	S2	108619	                      Salmonella enterica subsp. enterica serovar Newport
+  0.01	206	204	S2	90370	                      Salmonella enterica subsp. enterica serovar Typhi
+  0.05	753	31	S1	59202	                    Salmonella enterica subsp. salamae
+  0.03	487	0	S2	1243601	                      Salmonella enterica subsp. salamae serovar 55:k:z39
+  0.03	487	487	S3	1243602	                        Salmonella enterica subsp. salamae serovar 55:k:z39 str. 1315K
+  0.04	617	580	S	54736	                  Salmonella bongori
+  0.53	8104	303	G	561	                Escherichia
+  0.51	7683	7648	S	562	                  Escherichia coli
+  0.04	621	274	G	544	                Citrobacter
+  0.04	607	146	G	570	                Klebsiella
+  0.02	276	14	G1	3390273	                  Klebsiella pneumoniae complex
+  0.02	339	104	G	547	                Enterobacter
+  0.09	1332	0	K1	1783270	        FCB group
+  0.09	1332	0	K2	68336	          Bacteroidota/Chlorobiota group
+  0.09	1331	0	P	976	            Bacteroidota
+  0.09	1308	0	C	200643	              Bacteroidia
+  0.09	1308	0	O	171549	                Bacteroidales
+  0.09	1304	0	F	815	                  Bacteroidaceae
+  0.09	1304	1238	G	816	                    Bacteroides
+  0.04	671	1	K	1783272	      Bacillati
+  0.02	375	1	P	201174	        Actinomycetota
+  0.02	363	3	C	1760	          Actinomycetes
+  0.02	281	1	P	1239	        Bacillota
+  0.02	267	122	C	91061	          Bacilli

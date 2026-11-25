@@ -1,0 +1,82 @@
+  7.61	79537	79537	U	0	unclassified
+ 92.39	965623	12823	R	1	root
+ 91.16	952774	1878	R1	131567	  cellular organisms
+ 90.65	947441	12563	D	2	    Bacteria
+ 89.35	933840	2303	K	3379134	      Pseudomonadati
+ 84.61	884343	1778	P	1224	        Pseudomonadota
+ 84.39	882027	5508	C	1236	          Gammaproteobacteria
+ 83.84	876302	17257	O	91347	            Enterobacterales
+ 82.17	858792	57207	F	543	              Enterobacteriaceae
+ 76.50	799516	780852	G	590	                Salmonella
+  1.74	18135	8334	S	28901	                  Salmonella enterica
+  0.89	9275	4475	S1	59201	                    Salmonella enterica subsp. enterica
+  0.10	1039	964	S2	149539	                      Salmonella enterica subsp. enterica serovar Enteritidis
+  0.05	557	428	S2	90371	                      Salmonella enterica subsp. enterica serovar Typhimurium
+  0.03	328	210	S2	98360	                      Salmonella enterica subsp. enterica serovar Dublin
+  0.02	232	122	S2	108619	                      Salmonella enterica subsp. enterica serovar Newport
+  0.05	477	16	S1	59202	                    Salmonella enterica subsp. salamae
+  0.03	329	0	S2	1243601	                      Salmonella enterica subsp. salamae serovar 55:k:z39
+  0.03	329	329	S3	1243602	                        Salmonella enterica subsp. salamae serovar 55:k:z39 str. 1315K
+  0.04	426	404	S	54736	                  Salmonella bongori
+  0.06	595	28	G	561	                Escherichia
+  0.05	524	512	S	562	                  Escherichia coli
+  0.05	551	66	G	570	                Klebsiella
+  0.04	391	5	G1	3390273	                  Klebsiella pneumoniae complex
+  0.02	228	225	S	244366	                    Klebsiella variicola
+  0.03	306	131	G	544	                Citrobacter
+  0.02	218	60	G	547	                Enterobacter
+  0.03	321	0	C	28216	          Betaproteobacteria
+  0.03	315	2	O	80840	            Burkholderiales
+  0.03	305	1	F	119060	              Burkholderiaceae
+  0.03	267	1	G	32008	                Burkholderia
+  0.02	259	0	G1	87882	                  Burkholderia cepacia complex
+  0.02	254	1	S	152500	                    Burkholderia dolosa
+  0.02	253	253	S1	1385930	                      Burkholderia dolosa PC543
+  0.02	216	1	C	28211	          Alphaproteobacteria
+  4.50	46985	0	K1	1783270	        FCB group
+  4.50	46984	0	K2	68336	          Bacteroidota/Chlorobiota group
+  4.50	46983	2	P	976	            Bacteroidota
+  4.49	46937	0	C	200643	              Bacteroidia
+  4.49	46937	2	O	171549	                Bacteroidales
+  4.49	46934	15	F	815	                  Bacteroidaceae
+  4.47	46727	0	G	909656	                    Phocaeicola
+  4.47	46727	46727	S	357276	                      Phocaeicola dorei
+  0.10	1036	3	K	1783272	      Bacillati
+  0.05	552	0	P	1239	        Bacillota
+  0.05	545	299	C	91061	          Bacilli
+  0.02	235	0	O	1385	            Bacillales
+  0.02	218	0	F	90964	              Staphylococcaceae
+  0.02	217	0	G	1279	                Staphylococcus
+  0.02	208	208	S	1280	                  Staphylococcus aureus
+  0.05	473	0	P	201174	        Actinomycetota
+  0.04	470	2	C	1760	          Actinomycetes
+  0.33	3415	0	D	2759	    Eukaryota
+  0.33	3415	0	D1	33154	      Opisthokonta
+  0.33	3415	0	K	33208	        Metazoa
+  0.33	3415	0	K1	6072	          Eumetazoa
+  0.33	3415	0	K2	33213	            Bilateria
+  0.33	3415	0	K3	33511	              Deuterostomia
+  0.33	3415	0	P	7711	                Chordata
+  0.33	3415	0	P1	89593	                  Craniata
+  0.33	3415	0	P2	7742	                    Vertebrata
+  0.33	3415	0	P3	7776	                      Gnathostomata
+  0.33	3415	0	P4	117570	                        Teleostomi
+  0.33	3415	0	P5	117571	                          Euteleostomi
+  0.33	3415	0	P6	8287	                            Sarcopterygii
+  0.33	3415	0	P7	1338369	                              Dipnotetrapodomorpha
+  0.33	3415	0	P8	32523	                                Tetrapoda
+  0.33	3415	0	P9	32524	                                  Amniota
+  0.33	3415	0	C	40674	                                    Mammalia
+  0.33	3415	0	C1	32525	                                      Theria
+  0.33	3415	0	C2	9347	                                        Eutheria
+  0.33	3415	0	C3	1437010	                                          Boreoeutheria
+  0.33	3415	0	C4	314146	                                            Euarchontoglires
+  0.33	3415	0	O	9443	                                              Primates
+  0.33	3415	0	O1	376913	                                                Haplorrhini
+  0.33	3415	0	O2	314293	                                                  Simiiformes
+  0.33	3415	0	O3	9526	                                                    Catarrhini
+  0.33	3415	0	O4	314295	                                                      Hominoidea
+  0.33	3415	0	F	9604	                                                        Hominidae
+  0.33	3415	0	F1	207598	                                                          Homininae
+  0.33	3415	0	G	9605	                                                            Homo
+  0.33	3415	3415	S	9606	                                                              Homo sapiens

@@ -14,8 +14,13 @@ Inputs (any combination):
   - A forced token    (--force-organism)        -> always wins; source="forced"
 
 Algorithm (see SPEC):
-  1. Parse the Kraken2 report; consider species-level rows (rank starts "S").
-     Each species' share = its clade reads / total CLASSIFIED reads.
+  1. Parse the Kraken2 report; consider species rows (rank "S"). A species'
+     clade count already holds its subspecies and strains, so those rows are
+     not added again. Reads Kraken2 placed in a genus but in none of its
+     species are shared among that genus's species in proportion to the reads
+     each already holds. A small database leaves most reads at the genus, and
+     without this step a few stray reads with a species name outweigh them.
+     Each species' share = its reads / all reads placed in a genus or species.
   2. Dominance policy (defaults configurable):
        dominant_pct >= 70 AND runner_up_pct < 10  -> pure, confidence high
        top two in the same species-complex         -> pure (collapsed), medium
@@ -153,43 +158,78 @@ def _fallback_yaml(path: Path) -> Dict[str, Any]:
 # Kraken2 report parsing
 # ---------------------------------------------------------------------------
 def parse_kraken_report(path: Path) -> List[Dict[str, Any]]:
-    """Parse a Kraken2 report into species-level rows.
+    """Parse a Kraken2 report into species rows, one per species.
 
-    Kraken2 report columns (tab or whitespace separated):
-      1 pct  2 clade_reads  3 taxon_reads  4 rank_code  5 taxid  6.. name
-    Species rows have a rank code beginning with 'S'. Returns a list of
-    {"name", "clade_reads", "pct"} for species rows.
+    Kraken2 report columns (tab separated):
+      1 pct  2 clade_reads  3 taxon_reads  4 rank_code  5 taxid  6 name
+    The name is indented two spaces per level, which is how a row's place in
+    the tree is known.
+
+    Returns {"name", "clade_reads", "rank"} for each rank "S" row. Subspecies
+    and strain rows (S1, S2, ...) are left out: their reads are already in the
+    species' clade count. Reads that stop at a genus are shared among the
+    species under it in proportion to their own counts. A genus with such
+    reads and no species row is returned as "<Genus> sp.".
+
+    A report with no indentation (a hand-made or re-spaced file) carries no
+    tree, so its species rows are returned as they stand.
     """
     species: List[Dict[str, Any]] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return species
+
+    genus: Optional[Dict[str, Any]] = None      # the genus the rows are inside
+
+    def close_genus() -> None:
+        nonlocal genus
+        if genus is None:
+            return
+        members = genus["species"]
+        unplaced = genus["clade_reads"] - sum(m["clade_reads"] for m in members)
+        placed = sum(m["clade_reads"] for m in members)
+        if unplaced > 0:
+            if placed > 0:
+                for m in members:
+                    m["clade_reads"] += unplaced * m["clade_reads"] / placed
+            else:
+                species.append({"name": f"{genus['name']} sp.", "clade_reads": unplaced, "rank": "G"})
+        genus = None
+
     for line in text.splitlines():
         if not line.strip():
             continue
         cols = line.split("\t")
-        if len(cols) < 6:
+        depth: Optional[int] = None
+        if len(cols) >= 6:
+            raw_name = cols[5]
+            depth = (len(raw_name) - len(raw_name.lstrip(" "))) // 2
+        else:
             cols = re.split(r"\s{2,}|\t", line.strip())
-        if len(cols) < 6:
-            cols = line.split()
             if len(cols) < 6:
-                continue
-            # Recombine the name (cols 6..)
-            name = " ".join(cols[5:]).strip()
-            cols = cols[:5] + [name]
-        rank = cols[3].strip()
-        if not rank.upper().startswith("S"):
-            continue
+                cols = line.split()
+                if len(cols) < 6:
+                    continue
+                cols = cols[:5] + [" ".join(cols[5:]).strip()]
+        rank = cols[3].strip().upper()
         try:
             clade_reads = int(cols[1].strip())
         except (ValueError, IndexError):
             continue
-        name = cols[5].strip() if len(cols) > 5 else "\t".join(cols[5:]).strip()
-        # Only keep top-level species rank "S" (not S1/S2 subspecies) to avoid
-        # double counting; but subspecies still carry a useful species name —
-        # fold them into their species by trimming to the first two tokens.
-        species.append({"name": name, "clade_reads": clade_reads, "rank": rank})
+        name = cols[5].strip()
+        if depth is None:
+            close_genus()
+        elif genus is not None and depth <= genus["depth"]:
+            close_genus()
+        if rank == "G" and depth is not None:
+            genus = {"name": name, "depth": depth, "clade_reads": clade_reads, "species": []}
+        elif rank == "S":
+            row = {"name": name, "clade_reads": clade_reads, "rank": rank}
+            species.append(row)
+            if genus is not None:
+                genus["species"].append(row)
+    close_genus()
     return species
 
 
@@ -202,15 +242,13 @@ def _species_binomial(name: str) -> str:
 
 
 def rank_species(species_rows: List[Dict[str, Any]]) -> List[Tuple[str, int]]:
-    """Collapse to binomials, sum clade reads, return sorted [(name, reads)]."""
-    agg: Dict[str, int] = {}
+    """Collapse to binomials, sum reads, return sorted [(name, reads)]."""
+    agg: Dict[str, float] = {}
     for row in species_rows:
-        if row["rank"].upper() != "S":
-            # subspecies rows (S1/S2) — fold into the binomial
-            pass
         binom = _species_binomial(row["name"])
         agg[binom] = agg.get(binom, 0) + row["clade_reads"]
-    return sorted(agg.items(), key=lambda kv: kv[1], reverse=True)
+    return sorted(((name, int(round(reads))) for name, reads in agg.items()),
+                  key=lambda kv: kv[1], reverse=True)
 
 
 # ---------------------------------------------------------------------------

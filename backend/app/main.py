@@ -44,6 +44,7 @@ from .request_safety import install_request_safety
 from .sra import (
     SRAExpansionError,
     build_download_script,
+    downloaded_runs,
     expand_accessions_with_mapping,
     write_crosswalk_tsv,
 )
@@ -296,14 +297,19 @@ def _list_fastq_pairs(download_dir: Path) -> List[Dict]:
     Handles both Illumina (_R1/_R2) and SRA (_1/_2) naming conventions.
     Files with no read suffix are treated as single-end, with one exception:
     an SRA run can come as a pair plus <run>.fastq.gz, the reads whose mate
-    was not submitted or did not pass. Beside a complete pair that file is
+    was not submitted or did not pass. Beside its complete pair that file is
     not a sample of its own. It is named on the pair as `unpaired`.
+
+    The exception is for runs the folder's SRA download record names, and for
+    nothing else. A long-read file a lab has put beside an Illumina pair of
+    the same name is a sample in its own right and stays listed.
     """
     try:
         all_fq = sorted(download_dir.glob("*.fastq.gz"))
     except PermissionError:
         return []
 
+    from_sra = downloaded_runs(download_dir)
     groups: Dict[str, Dict] = {}
     for fq in all_fq:
         base, tag = _strip_read_tag(fq.name)
@@ -331,9 +337,9 @@ def _list_fastq_pairs(download_dir: Path) -> List[Dict]:
                 "r2": str(eff_r2) if eff_r2 else None,
                 "r2_name": eff_r2.name if eff_r2 else None,
                 "r2_size": eff_r2.stat().st_size if eff_r2 else None,
-                "unpaired": [fq.name for fq in g["extras"]] if (r1 and r2) else [],
+                "unpaired": [fq.name for fq in g["extras"]] if (r1 and r2 and base in from_sra) else [],
             })
-        if r1 and r2:
+        if r1 and r2 and base in from_sra:
             continue
         for fq in g["extras"]:
             pairs.append({
@@ -343,6 +349,7 @@ def _list_fastq_pairs(download_dir: Path) -> List[Dict]:
                 "r1_size": fq.stat().st_size,
                 "r2": None, "r2_name": None,
                 "r2_size": None,
+                "unpaired": [],
             })
 
     return pairs

@@ -294,7 +294,10 @@ def _list_fastq_pairs(download_dir: Path) -> List[Dict]:
     """Return samples as {sample, paired, r1, r1_name, r2, r2_name} dicts.
 
     Handles both Illumina (_R1/_R2) and SRA (_1/_2) naming conventions.
-    Files with no read suffix are treated as single-end.
+    Files with no read suffix are treated as single-end, with one exception:
+    an SRA run can come as a pair plus <run>.fastq.gz, the reads whose mate
+    was not submitted or did not pass. Beside a complete pair that file is
+    not a sample of its own. It is named on the pair as `unpaired`.
     """
     try:
         all_fq = sorted(download_dir.glob("*.fastq.gz"))
@@ -328,7 +331,10 @@ def _list_fastq_pairs(download_dir: Path) -> List[Dict]:
                 "r2": str(eff_r2) if eff_r2 else None,
                 "r2_name": eff_r2.name if eff_r2 else None,
                 "r2_size": eff_r2.stat().st_size if eff_r2 else None,
+                "unpaired": [fq.name for fq in g["extras"]] if (r1 and r2) else [],
             })
+        if r1 and r2:
+            continue
         for fq in g["extras"]:
             pairs.append({
                 "sample": fq.name[:-len(".fastq.gz")],

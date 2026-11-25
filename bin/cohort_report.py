@@ -17,8 +17,11 @@ and writes, into <project>/cohort_report/:
   cohort_report.html / .pdf    the report
   cohort_table.tsv / .xlsx     one row per isolate
   cohort_checks.json           the consistency checks and what they found
-  itol/ and itol_bundle.zip    the tree and annotation files for iTOL, made
-                               from the same chosen fields (see cohort_itol.py)
+  itol/ and itol_bundle.zip    the tree and annotation files for iTOL and the
+                               sheets for its annotation editor, made from the
+                               same chosen fields (see cohort_itol.py)
+  itol_batch.zip               the tree and annotation files alone, for iTOL's
+                               batch upload
 
 The report is for the people reading the result. It opens with a summary in
 words and a list of the things that change how a call should be read, then the
@@ -874,8 +877,9 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
             parts.append(f'<p class="small">{len(vir_all)} virulence genes are in every typed isolate '
                          "and are not drawn.</p>")
         parts.append('<p class="small">The same tree and annotations are in itol_bundle.zip beside this '
-                     "report, as files for iTOL (itol.embl.de), where the figure can be restyled by "
-                     "hand. Nothing is uploaded by this report.</p>")
+                     "report, as files for iTOL (itol.embl.de) and as sheets for its annotation "
+                     "editor, where the figure can be restyled by hand. Nothing is uploaded by this "
+                     "report.</p>")
     if figures.get("heat"):
         parts.append('<h2 class="newpage">Pairwise distances</h2>')
         parts.append(f"<p>Across {len(pair_values):,} pairs: minimum {min(pair_values):,}, median "
@@ -1084,7 +1088,8 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
             "Columns named \"low identity\" are replicon matches under the confident cutoff."
             if rep_colors else "")
         itol_files = list(bundle["files"])
-        log(f"wrote itol_bundle.zip ({len(itol_files)} files for iTOL)")
+        log(f"wrote itol_bundle.zip ({len(itol_files)} files for iTOL)"
+            + ("" if bundle["editor"] else "; no editor workbook, openpyxl is not installed"))
 
     pdf_ok = False
     if make_pdf:

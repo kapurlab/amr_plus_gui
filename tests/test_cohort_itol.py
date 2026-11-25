@@ -84,6 +84,7 @@ def test_the_report_writes_a_bundle_from_the_chosen_fields(tmp_path):
     out = project / "cohort_report"
     names = sorted(p.name for p in (out / "itol").iterdir())
     assert "proj.tree" in names and "README.txt" in names and "popup.txt" in names
+    assert "itol_editor.xlsx" in names
     assert "colorstrip_01_mlst_sequence_type.txt" in names and "colorstrip_02_state.txt" in names
     assert "binary_01_resistance.txt" in names and "binary_02_plasmid_replicons.txt" in names
     assert sorted(result["itol"]) == names
@@ -97,8 +98,81 @@ def test_the_report_writes_a_bundle_from_the_chosen_fields(tmp_path):
     assert "Col156, low identity" in labels and "Col156" not in labels
     with zipfile.ZipFile(out / "itol_bundle.zip") as zf:
         assert sorted(zf.namelist()) == names
+    # Batch upload reads every file but the tree as an annotation, so its zip
+    # holds the tree and the annotation files and nothing else.
+    with zipfile.ZipFile(out / "itol_batch.zip") as zf:
+        batch = zf.namelist()
+    assert sorted(batch) == sorted(n for n in names if n not in ("README.txt", "itol_editor.xlsx"))
+    assert sum(n.endswith(".tree") for n in batch) == 1
     assert "itol_bundle.zip" in (out / "cohort_report.html").read_text()
     assert "uploaded" in (out / "itol" / "README.txt").read_text()
+
+
+def test_editor_workbook_keeps_the_annotation_editors_layout(tmp_path):
+    from openpyxl import load_workbook
+    ids = cohort_itol.leaf_ids(["ISO-1", "farm 12", "ISO-3"])
+    strip = cohort_itol.Strip("state", {"ISO-1": "PR", "farm 12": "SP", "ISO-3": ""},
+                              {"PR": "#D98C9A", "SP": "#6FB7AB"})
+    block = cohort_itol.Binary("Resistance", "#C96A7B", ["gyrA_S83F", "tet(A)"],
+                               {"gyrA_S83F": {"ISO-1"}, "tet(A)": {"farm 12"}}, known={"ISO-1", "farm 12"},
+                               column_colors={"tet(A)": "#B9BBE0"})
+    facts = {"ISO-1": [("Sample", "S1"), ("host", "cattle")], "farm 12": [("Sample", "S2")]}
+    path = tmp_path / "itol_editor.xlsx"
+    sheets = cohort_itol.write_editor_workbook(path, ids, [strip], [block], facts)
+    assert sheets == [("strip state", "Color strip"), ("binary Resistance", "Binary data"),
+                      ("all fields", "table")]
+    wb = load_workbook(path)
+    assert wb.sheetnames[0] == "How to use"
+
+    ws = wb["strip state"]
+    # Data from E1, options from A14: where the editor reads them.
+    assert [ws.cell(1, c).value for c in range(5, 9)] == ["Tree node ID", "Tree node label", "Color", "Label"]
+    assert [[ws.cell(r, c).value for c in range(5, 9)] for r in (2, 3)] == [
+        ["ISO-1", "ISO-1", "#D98C9A", "PR"], ["farm_12", "farm 12", "#6FB7AB", "SP"]]
+    assert ws.cell(4, 5).value is None                      # no value, no row
+    assert ws.cell(2, 7).fill.fgColor.rgb.endswith("D98C9A")
+    assert [(ws.cell(r, 1).value, ws.cell(r, 2).value) for r in (14, 15, 16)] == [
+        ("Type", "Color strip"), ("Label", "state"), ("Legend color", "#4C8C8A")]
+    assert "E1:H3" in ws.cell(1, 1).value
+
+    ws = wb["binary Resistance"]
+    assert [ws.cell(r, 6).value for r in (1, 2, 3, 4)] == ["Field labels", "Field colors", "Field shapes",
+                                                           "Tree node label"]
+    assert ws.cell(4, 5).value == "Tree node ID" and "INSERT YOUR DATA BELOW" in ws.cell(4, 7).value
+    assert [[ws.cell(r, c).value for c in (7, 8)] for r in (1, 2, 3)] == [
+        ["gyrA_S83F", "tet(A)"], ["#C96A7B", "#B9BBE0"], ["rectangle", "rectangle"]]
+    assert [[ws.cell(r, c).value for c in range(5, 9)] for r in (5, 6)] == [
+        ["ISO-1", "ISO-1", 1, 0], ["farm_12", "farm 12", 0, 1]]
+    assert ws.cell(7, 5).value is None                      # ISO-3 was not screened
+    assert ws.cell(14, 2).value == "Binary data" and "E1:H6" in ws.cell(1, 1).value
+
+    ws = wb["all fields"]
+    assert [c.value for c in ws[1]] == ["Tree node ID", "Tree node label", "Sample", "host"]
+    assert [c.value for c in ws[3]][:3] == ["farm_12", "farm 12", "S2"]
+
+
+def test_sheet_names_fit_excel_and_stay_unique():
+    taken = set()
+    a = cohort_itol._sheet_name("strip", "collection date / year [of sampling] in full", taken)
+    b = cohort_itol._sheet_name("strip", "collection date / year [of sampling] in full", taken)
+    assert len(a) <= 31 and len(b) <= 31 and a != b
+    assert not set(a + b) & set("[]:*?/\\")
+
+
+def test_the_report_bundle_holds_the_editor_workbook(tmp_path):
+    from openpyxl import load_workbook
+    project = _project(tmp_path)
+    cohort_report.build(project, cohort_report.Settings(group_by=["state"]), make_pdf=False,
+                        log=lambda _m: None)
+    out = project / "cohort_report"
+    wb = load_workbook(out / "itol" / "itol_editor.xlsx")
+    assert {"strip MLST sequence type", "strip state", "binary Resistance", "all fields"} <= set(wb.sheetnames)
+    tree = (out / "itol" / "proj.tree").read_text()
+    ws = wb["strip state"]
+    tip_ids = [ws.cell(r, 5).value for r in range(2, ws.max_row + 1) if ws.cell(r, 5).value]
+    assert tip_ids and all(f"{i}:" in tree for i in tip_ids)      # every id is a tip of the tree
+    readme = (out / "itol" / "README.txt").read_text()
+    assert "itol_editor.xlsx" in readme and "itol_batch.zip" in readme
 
 
 def test_no_tree_means_no_itol_files(tmp_path):

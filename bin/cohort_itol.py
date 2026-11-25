@@ -13,15 +13,22 @@ same chosen fields that colour and group the report annotate the iTOL tree:
   colorstrip_NN_<field>.txt   one colour strip per chosen field
   binary_NN_<block>.txt       presence/absence, one column per feature
   popup.txt                   what to show when a tip is clicked
+  itol_editor.xlsx            the same annotations as sheets for the iTOL
+                              annotation editor (the spreadsheet add-on)
   README.txt                  how to use the files
 
-and the same files zipped as itol_bundle.zip. The tree file ends in .tree
-because iTOL's batch upload needs that; nothing here uploads anything. Sending
-a tree to iTOL sends its names and annotations to a server outside the lab,
-which is the user's decision to make.
+Two zips sit beside the folder. itol_bundle.zip holds everything, for a
+person. itol_batch.zip holds only the tree and the annotation files, which is
+what iTOL's batch upload accepts: one file ending in .tree, and every other
+file read as an annotation. Nothing here uploads anything. Sending a tree to
+iTOL sends its names and annotations to a server outside the lab, which is the
+user's decision to make.
 
-Every file uses SEPARATOR TAB: display names and values may hold spaces and
-commas, never tabs. The layouts follow iTOL's own templates.
+Every text file uses SEPARATOR TAB: display names and values may hold spaces
+and commas, never tabs. The layouts follow iTOL's own templates. The workbook
+follows the sheet the annotation editor lays out: its data area starts at E1
+and its dataset options at A14, so a block copied from a sheet here pastes
+into the editor at the same cells.
 """
 
 from __future__ import annotations
@@ -38,6 +45,16 @@ from cohort_tree import Node
 # iTOL binary dataset values and the rectangle shape.
 PRESENT, ABSENT = "1", "0"
 RECTANGLE = "1"
+STRIP_COLOR = "#4C8C8A"
+
+# The annotation editor's sheet: data from E1, dataset options from A14, and
+# the names it uses for a dataset type and for the rectangle shape.
+EDITOR_COLUMN = 5
+EDITOR_OPTIONS_ROW = 14
+EDITOR_STRIP, EDITOR_BINARY = "Color strip", "Binary data"
+EDITOR_RECTANGLE = "rectangle"
+EDITOR_INSERT_BELOW = "\u2193 \u2193 INSERT YOUR DATA BELOW \u2193 \u2193"
+EDITOR_WORKBOOK = "itol_editor.xlsx"
 
 
 @dataclass
@@ -108,7 +125,7 @@ def _slug(text: str) -> str:
 def colorstrip_text(strip: Strip, ids: Dict[str, str]) -> str:
     order = [v for v in strip.colors if v and any(x == v for x in strip.values.values())]
     lines = ["DATASET_COLORSTRIP", "SEPARATOR TAB",
-             f"DATASET_LABEL\t{_clean(strip.title)}", "COLOR\t#4C8C8A", "COLOR_BRANCHES\t0",
+             f"DATASET_LABEL\t{_clean(strip.title)}", f"COLOR\t{STRIP_COLOR}", "COLOR_BRANCHES\t0",
              f"LEGEND_TITLE\t{_clean(strip.title)}",
              "LEGEND_SHAPES\t" + "\t".join(RECTANGLE for _ in order),
              "LEGEND_COLORS\t" + "\t".join(strip.colors[v] for v in order),
@@ -156,6 +173,146 @@ def popup_text(ids: Dict[str, str], facts: Dict[str, List[Tuple[str, str]]]) -> 
     return "\n".join(lines) + "\n"
 
 
+def _sheet_name(prefix: str, title: str, taken: set) -> str:
+    """A worksheet name Excel accepts: 31 characters, none of []:*?/\\, unique."""
+    base = re.sub(r"[\[\]:*?/\\]", " ", f"{prefix} {title}").strip()[:31].strip() or prefix
+    name, n = base, 1
+    while name.lower() in taken:
+        n += 1
+        tail = f" {n}"
+        name = base[:31 - len(tail)].strip() + tail
+    taken.add(name.lower())
+    return name
+
+
+def write_editor_workbook(path: Path, ids: Dict[str, str], strips: List[Strip], binaries: List[Binary],
+                          facts: Dict[str, List[Tuple[str, str]]]) -> List[Tuple[str, str]]:
+    """Write the annotations as sheets for the iTOL annotation editor.
+    Returns (sheet name, dataset type) for each sheet written. Raises
+    ImportError when openpyxl is not installed."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    bold = Font(bold=True)
+    col = EDITOR_COLUMN
+    wb = Workbook()
+    guide = wb.active
+    guide.title = "How to use"
+    taken = {"how to use"}
+    sheets: List[Tuple[str, str]] = []
+
+    def swatch(cell, color: str) -> None:
+        if re.fullmatch(r"#[0-9A-Fa-f]{6}", color or ""):
+            cell.fill = PatternFill("solid", fgColor=color[1:].upper())
+
+    def options(ws, kind: str, label: str, color: str, last: str) -> None:
+        ws.cell(1, 1, f"Copy E1:{last} and paste it at E1 in the editor.").font = bold
+        ws.cell(2, 1, "Set the dataset options there as in rows 14 to 16 below.")
+        row = EDITOR_OPTIONS_ROW
+        ws.cell(row - 1, 1, "Dataset options").font = bold
+        for offset, (key, value) in enumerate((("Type", kind), ("Label", label), ("Legend color", color))):
+            ws.cell(row + offset, 1, key).font = bold
+            ws.cell(row + offset, 2, value)
+        swatch(ws.cell(row + 2, 2), color)
+        ws.column_dimensions["A"].width = 16
+        ws.column_dimensions["B"].width = 26
+        ws.column_dimensions[get_column_letter(col)].width = 24
+        ws.column_dimensions[get_column_letter(col + 1)].width = 24
+
+    for strip in strips:
+        rows = [(ids[label], label, strip.colors[value], strip.names.get(value, value))
+                for label, value in ((label, strip.values.get(label, "")) for label in ids)
+                if value and value in strip.colors]
+        if not rows:
+            continue
+        ws = wb.create_sheet(_sheet_name("strip", strip.title, taken))
+        for offset, head in enumerate(("Tree node ID", "Tree node label", "Color", "Label")):
+            ws.cell(1, col + offset, head).font = bold
+        for r, (tip_id, label, color, name) in enumerate(rows, start=2):
+            ws.cell(r, col, tip_id)
+            ws.cell(r, col + 1, _clean(label))
+            swatch(ws.cell(r, col + 2, color), color)
+            ws.cell(r, col + 3, _clean(name))
+        options(ws, EDITOR_STRIP, _clean(strip.title), STRIP_COLOR,
+                f"{get_column_letter(col + 3)}{len(rows) + 1}")
+        sheets.append((ws.title, EDITOR_STRIP))
+
+    for block in binaries:
+        tips = [label for label in ids if label in block.known]
+        if not (block.columns and tips):
+            continue
+        ws = wb.create_sheet(_sheet_name("binary", block.title, taken))
+        # Three rows define the fields, the fourth is the header, as the editor lays them out.
+        for r, (arrow, key) in enumerate(((" \u2192", "Field labels"), ("DEFINE FIELDS \u2192", "Field colors"),
+                                          (" \u2192", "Field shapes")), start=1):
+            ws.cell(r, col, arrow)
+            ws.cell(r, col + 1, key).font = bold
+        ws.cell(4, col, "Tree node ID").font = bold
+        ws.cell(4, col + 1, "Tree node label").font = bold
+        ws.cell(4, col + 2, EDITOR_INSERT_BELOW)
+        for c, column in enumerate(block.columns, start=col + 2):
+            color = block.column_colors.get(column, block.color)
+            ws.cell(1, c, _clean(column))
+            swatch(ws.cell(2, c, color), color)
+            ws.cell(3, c, EDITOR_RECTANGLE)
+        for r, label in enumerate(tips, start=5):
+            ws.cell(r, col, ids[label])
+            ws.cell(r, col + 1, _clean(label))
+            for c, column in enumerate(block.columns, start=col + 2):
+                ws.cell(r, c, 1 if label in block.present.get(column, set()) else 0)
+        options(ws, EDITOR_BINARY, _clean(block.title), block.color,
+                f"{get_column_letter(col + 1 + len(block.columns))}{len(tips) + 4}")
+        sheets.append((ws.title, EDITOR_BINARY))
+
+    # One plain table of everything known about each tip, keyed by the tree's
+    # ids: the sheet to work from when adding an annotation of one's own.
+    keys: List[str] = []
+    for label in ids:
+        for key, value in facts.get(label, []):
+            if key not in keys and _clean(value):
+                keys.append(key)
+    if keys:
+        ws = wb.create_sheet(_sheet_name("all", "fields", taken))
+        for c, head in enumerate(["Tree node ID", "Tree node label"] + keys, start=1):
+            ws.cell(1, c, _clean(head)).font = bold
+        for r, label in enumerate(ids, start=2):
+            row = dict(facts.get(label, []))
+            ws.cell(r, 1, ids[label])
+            ws.cell(r, 2, _clean(label))
+            for c, key in enumerate(keys, start=3):
+                ws.cell(r, c, _clean(row.get(key, "")))
+        ws.column_dimensions["A"].width = 24
+        ws.column_dimensions["B"].width = 24
+        ws.freeze_panes = "C2"
+        sheets.append((ws.title, "table"))
+
+    lines = [
+        "Sheets for the iTOL annotation editor (the spreadsheet add-on to iTOL)",
+        "",
+        "1. Upload the .tree file from this folder to your iTOL account.",
+        "2. Open the iTOL annotation editor workbook, log in and select that tree.",
+        "3. For each strip or binary sheet here: create a new dataset in the editor of the",
+        "   type in cell B14, copy the block that starts at E1 and paste it at E1 in the",
+        "   editor, set Label and Legend color as in B15 and B16, then save to iTOL.",
+        "",
+        "Each sheet keeps the editor's own layout: data from E1, dataset options from A14.",
+        "Colors are plain hex values, so change a color here or in the editor.",
+        "In a binary sheet 1 is found and 0 is screened and not found. A tip with no result has no row.",
+        "",
+        "The .txt files in this folder hold the same datasets with their legends. Dropped onto",
+        "the tree in iTOL they become datasets the editor can then open and change.",
+        "",
+        "Sheets in this workbook",
+    ] + [f"   {name}: {kind}" for name, kind in sheets]
+    for r, text in enumerate(lines, start=1):
+        guide.cell(r, 1, text)
+    guide.cell(1, 1).font = bold
+    guide.column_dimensions["A"].width = 100
+    wb.save(path)
+    return sheets
+
+
 README = """Tree and annotation files for iTOL (https://itol.embl.de)
 
 These files are written from the cohort report. Nothing has been uploaded.
@@ -168,7 +325,7 @@ To use them
      the tree. They can all be dropped at once.
   3. Style and export the figure in iTOL. Without an iTOL subscription the
      annotations are not saved between visits, so export before leaving.
-
+{editor}
 What each file is
 {files}
 
@@ -177,8 +334,17 @@ Reading the presence/absence blocks
   isolate was screened and the feature was not found. No rectangle at all
   means there is no result for that isolate.
 {low}
-With an iTOL subscription, itol_bundle.zip can be sent as it is through iTOL's
-batch upload, which needs the tree file to end in .tree.
+With an iTOL subscription, itol_batch.zip (beside this folder) can be sent
+through iTOL's batch upload. It holds only the tree and the annotation files,
+because batch upload reads every file that is not the tree as an annotation.
+"""
+
+README_EDITOR = """
+With the iTOL annotation editor (the spreadsheet add-on)
+  {workbook} holds the same strips and presence/absence blocks as
+  sheets in the editor's own layout. Its first sheet gives the steps. Use it
+  to set colors in a spreadsheet, or to add a dataset of your own from the
+  table of all fields.
 """
 
 
@@ -214,13 +380,31 @@ def write_bundle(outdir: Path, name: str, root: Node, tip_labels: List[str], str
                 f"presence/absence: {block.title}")
     if facts:
         put("popup.txt", popup_text(ids, facts), "details shown when a tip is clicked")
+    # What iTOL itself reads: the tree and the annotation files, nothing else.
+    for_itol = [f for f, _ in written]
+    extras: List[str] = []
+    editor_note = ""
+    try:
+        sheets = write_editor_workbook(folder / EDITOR_WORKBOOK, ids, strips, binaries, facts)
+        written.append((EDITOR_WORKBOOK, f"sheets for the iTOL annotation editor ({len(sheets)})"))
+        extras.append(EDITOR_WORKBOOK)
+        editor_note = README_EDITOR.format(workbook=EDITOR_WORKBOOK)
+    except ImportError:
+        pass        # no openpyxl: the text files still hold every dataset
     listing = "\n".join(f"  {f:38s} {what}" for f, what in written)
     (folder / "README.txt").write_text(
-        README.format(tree=tree_name, files=listing, low=(f"  {low_note}\n" if low_note else "")),
+        README.format(tree=tree_name, files=listing, editor=editor_note,
+                      low=(f"  {low_note}\n" if low_note else "")),
         encoding="utf-8")
+    extras.append("README.txt")
     zip_path = Path(outdir) / "itol_bundle.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in sorted(folder.iterdir()):
             zf.write(f, arcname=f.name)
-    return {"folder": str(folder), "zip": zip_path.name, "tree": tree_name,
-            "files": [f for f, _ in written] + ["README.txt"], "ids": ids}
+    batch_path = Path(outdir) / "itol_batch.zip"
+    with zipfile.ZipFile(batch_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in for_itol:
+            zf.write(folder / f, arcname=f)
+    return {"folder": str(folder), "zip": zip_path.name, "batch_zip": batch_path.name, "tree": tree_name,
+            "files": for_itol + extras, "for_itol": for_itol, "editor": EDITOR_WORKBOOK in extras,
+            "ids": ids}

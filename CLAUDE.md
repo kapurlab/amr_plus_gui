@@ -46,8 +46,10 @@ Authoritative build spec: `SPEC_BUILD.md`.
                        <project>/cohort_report/ (HTML, PDF, table, checks)
     cohort_tree.py     Newick reading, rooting and layout for that report
     cohort_figures.py  its figures as inline SVG (bars, tree + matrix, heatmap)
-    cohort_itol.py     the same tree and annotations as files for iTOL
-                       (itol/ and itol_bundle.zip); writes files, uploads nothing
+    cohort_itol.py     the same tree and annotations as files for iTOL and
+                       as sheets for the iTOL annotation editor (itol/,
+                       itol_bundle.zip, itol_batch.zip); writes files, uploads
+                       nothing
   conda_setup/environment.yml   env name amr_plus
   conda_setup/typing/*.yml      one env per typing tool (they do not solve together)
   deploy/install.sh, INSTALL.md

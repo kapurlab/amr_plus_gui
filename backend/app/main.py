@@ -1274,6 +1274,7 @@ _COHORT_FILE_LABELS = [
     ("cohort_report.pdf", "Report (PDF)"),
     ("cohort_table.xlsx", "Per-isolate table (Excel)"),
     ("cohort_table.tsv", "Per-isolate table (TSV)"),
+    ("itol_bundle.zip", "Tree and annotations for iTOL (zip)"),
     ("cohort_checks.json", "Checks (JSON)"),
 ]
 

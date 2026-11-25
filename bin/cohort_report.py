@@ -17,6 +17,8 @@ and writes, into <project>/cohort_report/:
   cohort_report.html / .pdf    the report
   cohort_table.tsv / .xlsx     one row per isolate
   cohort_checks.json           the consistency checks and what they found
+  itol/ and itol_bundle.zip    the tree and annotation files for iTOL, made
+                               from the same chosen fields (see cohort_itol.py)
 
 The report is for the people reading the result. It opens with a summary in
 words and a list of the things that change how a call should be read, then the
@@ -56,6 +58,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
 import cohort_figures as fig  # noqa: E402
+import cohort_itol  # noqa: E402
 import cohort_tree  # noqa: E402
 import reporting  # noqa: E402
 from reporting.html_report import _CSS, _e, html_to_pdf  # noqa: E402
@@ -870,6 +873,9 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
         if vir_all:
             parts.append(f'<p class="small">{len(vir_all)} virulence genes are in every typed isolate '
                          "and are not drawn.</p>")
+        parts.append('<p class="small">The same tree and annotations are in itol_bundle.zip beside this '
+                     "report, as files for iTOL (itol.embl.de), where the figure can be restyled by "
+                     "hand. Nothing is uploaded by this report.</p>")
     if figures.get("heat"):
         parts.append('<h2 class="newpage">Pairwise distances</h2>')
         parts.append(f"<p>Across {len(pair_values):,} pairs: minimum {min(pair_values):,}, median "
@@ -934,9 +940,9 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
     parts.append("<h2>Per isolate results</h2>")
     parts.append(html_table([0] + list(range(n_meta, len(table_header)))))
     if meta_cols:
-        shown, constant, duplicate = informative_columns(meta_cols, order_for_table)
+        printed, constant, duplicate = informative_columns(meta_cols, order_for_table)
         parts.append("<h2>Isolates and metadata</h2>")
-        parts.append(html_table([0, 1] + [2 + meta_cols.index(c) for c in shown]))
+        parts.append(html_table([0, 1] + [2 + meta_cols.index(c) for c in printed]))
         parts.append(f'<p class="small">Metadata as given in {_e(Path(metadata).name)}. Rows are in '
                      "tree order where the isolate is in the tree. Only columns that tell isolates "
                      "apart are printed; cohort_table.tsv has every column.</p>")
@@ -1017,6 +1023,69 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
         wb.save(outdir / "cohort_table.xlsx")
     except Exception as exc:  # noqa: BLE001: the TSV is always written
         log(f"NOTE: cohort_table.xlsx not written ({exc}); the .tsv holds the same table.")
+    # ---- the tree and its annotations as files for iTOL ----
+    itol_files: List[str] = []
+    if tips:
+        strips: List[cohort_itol.Strip] = []
+        if color_spec:
+            strips.append(cohort_itol.Strip(color_name, color_of, dict(palette), color_label))
+        for spec in group_specs:
+            if spec == color_spec:
+                continue
+            values, _ = pooled({i.label: field_value(i, spec) for i in isolates})
+            ranked = [k for k, _ in Counter(v for v in values.values() if v).most_common()]
+            strips.append(cohort_itol.Strip(field_label(spec), values, fig.lineage_palette(ranked)))
+
+        def having(getter, column: str) -> set:
+            return {i.label for i in isolates if column in getter(i)}
+
+        # A replicon seen only at low identity gets a column of its own, in the
+        # paler colour, so a weak match is never drawn as a confident one.
+        rep_columns: List[str] = []
+        rep_present: Dict[str, set] = {}
+        rep_colors: Dict[str, str] = {}
+        for c in rep_cols:
+            if having(lambda i: i.replicons, c):
+                rep_columns.append(c)
+                rep_present[c] = having(lambda i: i.replicons, c)
+            if having(lambda i: i.replicons_low, c):
+                low_name = f"{c}, low identity"
+                rep_columns.append(low_name)
+                rep_present[low_name] = having(lambda i: i.replicons_low, c)
+                rep_colors[low_name] = C_REPLICON_LOW
+        typed_labels = {i.label for i in isolates if i.has_typing}
+        binaries = [
+            cohort_itol.Binary("Resistance", C_RESISTANCE, res_cols,
+                               {c: having(lambda i: i.resistance, c) for c in res_cols},
+                               {i.label for i in isolates if i.has_amr}),
+            cohort_itol.Binary("Plasmid replicons", C_REPLICON, rep_columns, rep_present, typed_labels,
+                               rep_colors),
+            cohort_itol.Binary("Virulence, variable", C_VIRULENCE, vir_cols,
+                               {c: having(lambda i: i.virulence, c) for c in vir_cols}, typed_labels),
+        ]
+        distinguishing, _constant, _duplicate = informative_columns(meta_cols, isolates)
+        facts: Dict[str, List[Tuple[str, str]]] = {}
+        for iso in isolates:
+            rows_for = [("Sample", iso.sample)]
+            if has_mlst:
+                rows_for.append(("MLST", lineage_text(iso.st)))
+            if iso.serovar:
+                rows_for.append(("Serovar", iso.serovar))
+            if iso.has_amr:
+                rows_for.append(("Resistance", shown(iso.resistance, res_all)))
+            if iso.has_typing:
+                rows_for.append(("Plasmid replicons", ", ".join(iso.replicons + iso.replicons_low) or "none"))
+            rows_for += [(c, iso.meta.get(c, "")) for c in distinguishing]
+            if iso.notes:
+                rows_for.append(("Notes", "; ".join(iso.notes)))
+            facts[iso.label] = rows_for
+        bundle = cohort_itol.write_bundle(
+            outdir, proj.get("name") or project.name, root, [t.name for t in tips], strips, binaries, facts,
+            "Columns named \"low identity\" are replicon matches under the confident cutoff."
+            if rep_colors else "")
+        itol_files = list(bundle["files"])
+        log(f"wrote itol_bundle.zip ({len(itol_files)} files for iTOL)")
+
     pdf_ok = False
     if make_pdf:
         pdf_ok = html_to_pdf(html_path, outdir / "cohort_report.pdf")
@@ -1033,7 +1102,7 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
         "fields": list_fields(isolates, meta_cols + ([label_column] if label_column else [])),
         "rooting": rooting, "alignment_columns": alignment_columns,
         "pairs": len(pair_values), "problems": problems, "info": info, "summary": summary,
-        "with_acquired_resistance": len(with_acquired), "pdf": pdf_ok,
+        "with_acquired_resistance": len(with_acquired), "pdf": pdf_ok, "itol": itol_files,
         "files": sorted(p.name for p in outdir.iterdir() if p.is_file()),
     }
     (outdir / "cohort_checks.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

@@ -153,14 +153,41 @@ _AGREEMENT_TEXT = {
 }
 
 
-def gene_names(hits: Optional[List[Dict[str, Any]]]) -> List[str]:
-    """Distinct gene names from abricate hits, in first-seen order."""
+def gene_names(hits: Optional[List[Dict[str, Any]]], low_identity: Optional[bool] = None) -> List[str]:
+    """Distinct gene names from abricate hits, in first-seen order.
+
+    low_identity=False keeps only confident hits and True only the hits marked
+    low identity; None keeps both. A low-identity hit that sits beside a
+    confident hit of the same family is a second match to that replicon and
+    is never listed here; the report table still shows it."""
     seen: List[str] = []
     for hit in hits or []:
+        if hit.get("beside"):
+            continue
+        if low_identity is not None and bool(hit.get("low_identity")) != low_identity:
+            continue
         name = str(hit.get("gene") or "").strip()
         if name and name not in seen:
             seen.append(name)
     return seen
+
+
+def cgmlst_match_text(sistr: Dict[str, Any]) -> str:
+    """"312 of 330", the cgMLST alleles shared with SISTR's nearest genome.
+
+    This is reported in place of SISTR's cgMLST ST. That number is a hash of
+    the whole allele profile, so one allele assembled differently gives a new
+    number: the same isolate assembled twice got two, while this count and the
+    nearest genome stayed the same."""
+    matching, found = sistr.get("cgmlst_matching_alleles"), sistr.get("cgmlst_found_loci")
+    if matching is None:
+        return "—"
+    return f"{matching} of {found}" if found is not None else str(matching)
+
+
+def replicon_confident_cutoff(typing: Dict[str, Any]) -> int:
+    cut = ((typing.get("thresholds") or {}).get("plasmidfinder") or {}).get("confident_identity")
+    return int(cut) if cut else 95
 
 
 def typing_stats_items(typing: Dict[str, Any]) -> List[Tuple[str, str]]:
@@ -182,12 +209,17 @@ def typing_stats_items(typing: Dict[str, Any]) -> List[Tuple[str, str]]:
         items.append(("Serovar agreement",
                       _AGREEMENT_TEXT.get(serovar.get("agreement"), serovar.get("agreement") or "—")))
         items.append(("Antigenic profile (SeqSero2)", seqsero2.get("antigenic_profile") or "—"))
-        items.append(("cgMLST ST (SISTR)", str(sistr.get("cgmlst_st") or "—")))
-        items.append(("cgMLST matching alleles (SISTR)", str(sistr.get("cgmlst_matching_alleles") or "—")))
+        items.append(("cgMLST alleles matching nearest genome (SISTR)", cgmlst_match_text(sistr)))
+        items.append(("Nearest genome by cgMLST (SISTR)", sistr.get("cgmlst_genome_match") or "—"))
         items.append(("SISTR QC", sistr.get("qc_status") or "—"))
     if "plasmid_replicons" in typing:
-        names = gene_names(typing.get("plasmid_replicons"))
+        hits = typing.get("plasmid_replicons")
+        names = gene_names(hits, low_identity=False)
+        low = gene_names(hits, low_identity=True)
         items.append(("Plasmid replicons", ", ".join(names) if names else "none detected"))
+        if low:
+            items.append((f"Plasmid replicons below {replicon_confident_cutoff(typing)}% identity",
+                          ", ".join(low)))
     if "virulence_genes" in typing:
         items.append(("Virulence genes (VFDB)", _fmt_int(len(gene_names(typing.get("virulence_genes"))))))
     return items

@@ -69,12 +69,45 @@ function methodClass(method) {
 // ---------------------------------------------------------------------------
 // The tool-specific columns of the shared Results table. Everything else about
 // the pane is identical across the suite.
+// Serovar as one cell: the name when SISTR and SeqSero2 agree, both names when
+// they do not, and a note when only one tool gave a call.
+function serovarCell(row) {
+  const m = row.metrics || {};
+  const a = m.serovar_sistr, b = m.serovar_seqsero2;
+  if (!a && !b) return "—";
+  if (m.serovar_agreement === "agree") return a;
+  if (a && b) {
+    return (
+      <span title="SISTR and SeqSero2 gave different or overlapping calls. See the report.">
+        {a} / {b}{m.serovar_agreement === "disagree" ? " ⚠" : ""}
+      </span>
+    );
+  }
+  return <span title="Only one of SISTR and SeqSero2 gave a call.">{a || b} (one tool)</span>;
+}
+
+function repliconCell(row) {
+  const m = row.metrics || {};
+  if (m.replicons === null || m.replicons === undefined) return "—";
+  if (!m.replicons_low) return m.replicons;
+  // A trailing + says there are low-identity hits as well; the names are in
+  // the tooltip, the report and the export.
+  return (
+    <span title={`Also at low identity, see the report: ${m.replicons_low}`}>
+      {m.replicons === "none" ? "low identity only" : `${m.replicons} +`}
+    </span>
+  );
+}
+
 const RESULT_COLUMNS = [
   { key: "organism", label: "Organism" },
+  { key: "serovar_sistr", label: "Serovar", render: serovarCell },
   { key: "mlst", label: "MLST" },
   { key: "genes", label: "AMR genes", align: "right" },
   { key: "point", label: "Point mut.", align: "right" },
   { key: "plus", label: "Plus", align: "right" },
+  { key: "replicons", label: "Replicons", render: repliconCell },
+  { key: "completeness", label: "Compl. %", align: "right" },
 ];
 
 export default function App() {

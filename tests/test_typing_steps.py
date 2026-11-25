@@ -39,6 +39,8 @@ def test_sistr_json_is_reduced_to_the_reported_fields():
     assert result["h1"] == "g,p"
     assert result["cgmlst_st"] == 2789633150
     assert result["cgmlst_matching_alleles"] == 312
+    assert result["cgmlst_found_loci"] == 330
+    assert result["cgmlst_genome_match"] == "2018-CAL-0016"
     assert result["qc_status"] == "PASS"
 
 
@@ -59,12 +61,52 @@ def test_seqsero2_empty_output_gives_no_call():
 def test_abricate_plasmidfinder_hits():
     hits = typing_steps.parse_abricate_tab(_fixture("abricate_plasmidfinder.tsv"))
     screen = typing_steps.ABRICATE_DATABASES["plasmidfinder"]
-    assert {h["gene"] for h in hits} == {"IncFII(S)", "IncX1"}
-    assert {h["allele"] for h in hits} == {"IncFII(S)_1", "IncX1_1"}
+    assert {h["allele"] for h in hits} == {"IncFII(S)_1", "IncX1_1", "IncFII(pAR0022)_1"}
     for hit in hits:
         assert hit["identity"] >= screen.min_identity
         assert hit["coverage"] >= screen.min_coverage
         assert hit["contig"]
+
+
+def test_replicon_hits_under_the_confident_cutoff_are_marked_not_dropped():
+    screen = typing_steps.ABRICATE_DATABASES["plasmidfinder"]
+    hits = typing_steps.mark_low_identity(
+        typing_steps.parse_abricate_tab(_fixture("abricate_plasmidfinder.tsv")), screen)
+    confident = {h["gene"] for h in hits if not h["low_identity"]}
+    low = {h["gene"]: h for h in hits if h["low_identity"]}
+    assert confident == {"IncFII(S)", "IncX1"}
+    assert set(low) == {"IncFII(pAR0022)"}
+    assert screen.min_identity <= low["IncFII(pAR0022)"]["identity"] < screen.confident_identity
+    # It lies right next to the confident IncFII(S) hit on the same contig.
+    assert low["IncFII(pAR0022)"]["beside"] == "IncFII(S)"
+
+
+def _hit(gene, contig, start, identity):
+    return {"gene": gene, "contig": contig, "start": str(start), "end": str(start + 300),
+            "identity": identity, "coverage": 100.0}
+
+
+def test_a_low_identity_hit_is_beside_only_a_near_confident_hit_of_its_family():
+    screen = typing_steps.ABRICATE_DATABASES["plasmidfinder"]
+    hits = typing_steps.mark_low_identity([
+        _hit("IncFII(S)", "c1", 1000, 98.0),
+        _hit("IncFII(pAR0022)", "c1", 1400, 85.0),   # same family, same contig, near
+        _hit("IncFII(pX)", "c1", 90000, 85.0),       # same family, far away
+        _hit("IncFII(pY)", "c2", 1200, 85.0),        # same family, other contig
+        _hit("Col(pHAD28)", "c1", 1300, 92.0),       # near, but another family
+    ], screen)
+    beside = {h["gene"]: h["beside"] for h in hits}
+    assert beside == {"IncFII(S)": None, "IncFII(pAR0022)": "IncFII(S)", "IncFII(pX)": None,
+                      "IncFII(pY)": None, "Col(pHAD28)": None}
+    assert reporting.gene_names(hits, low_identity=True) == ["IncFII(pX)", "IncFII(pY)", "Col(pHAD28)"]
+    assert reporting.gene_names(hits, low_identity=False) == ["IncFII(S)"]
+
+
+def test_a_screen_without_a_confident_cutoff_marks_nothing():
+    hits = typing_steps.mark_low_identity(
+        typing_steps.parse_abricate_tab(_fixture("abricate_vfdb.tsv")),
+        typing_steps.ABRICATE_DATABASES["vfdb"])
+    assert hits and not any(h["low_identity"] for h in hits)
 
 
 @pytest.mark.parametrize(
@@ -194,9 +236,13 @@ def _typing_summary() -> dict:
     return {
         "serovar": {"sistr": sistr, "seqsero2": seqsero2,
                     **typing_steps.serovar_agreement(sistr, seqsero2)},
-        "plasmid_replicons": typing_steps.parse_abricate_tab(_fixture("abricate_plasmidfinder.tsv")),
+        "plasmid_replicons": typing_steps.mark_low_identity(
+            typing_steps.parse_abricate_tab(_fixture("abricate_plasmidfinder.tsv")),
+            typing_steps.ABRICATE_DATABASES["plasmidfinder"]),
         "virulence_genes": [],
         "checkm2": typing_steps.parse_checkm2_tsv(_fixture("checkm2.tsv")),
+        "thresholds": {"plasmidfinder": {"min_identity": 80, "min_coverage": 60,
+                                         "confident_identity": 95}},
     }
 
 
@@ -205,7 +251,14 @@ def test_stats_rows_report_what_ran():
     assert rows["Serovar (SISTR)"] == "Dublin"
     assert rows["Serovar (SeqSero2)"] == "Dublin"
     assert rows["Serovar agreement"] == "SISTR and SeqSero2 agree"
-    assert rows["Plasmid replicons"] == "IncX1, IncFII(S)"
+    # The only low-identity hit is a weak second match beside IncFII(S), so no
+    # low-identity row is added.
+    assert not any("below 95% identity" in label for label in rows)
+    assert set(rows["Plasmid replicons"].split(", ")) == {"IncX1", "IncFII(S)"}
+    assert rows["cgMLST alleles matching nearest genome (SISTR)"] == "312 of 330"
+    assert rows["Nearest genome by cgMLST (SISTR)"] == "2018-CAL-0016"
+    # SISTR's cgMLST ST is a hash of the allele profile and is not reported.
+    assert not any("cgMLST ST" in label for label in rows)
     assert rows["Virulence genes (VFDB)"] == "0"
     assert rows["CheckM2 completeness (%)"].endswith("%")
 
@@ -233,6 +286,8 @@ def test_html_report_shows_the_typing_sections(tmp_path):
     text = out.read_text(encoding="utf-8")
     assert "Serovar and lineage" in text and "Dublin" in text
     assert "IncX1" in text
+    assert "weak second match beside IncFII(S)" in text and "IncFII(pAR0022)" in text
+    assert "312 of 330" in text and "cgMLST ST" not in text
     assert "No virulence genes detected." in text
     assert "DISAGREE" not in text and "different serovars" not in text
 

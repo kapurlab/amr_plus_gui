@@ -43,16 +43,21 @@ class Screen:
     key: str
     min_identity: int
     min_coverage: int
+    # Hits below this identity are kept but marked low identity. None: no mark.
+    confident_identity: Optional[int] = None
 
 
 # The databases abricate is asked for.
-#   plasmidfinder: 95% identity and 60% coverage, the cutoffs PlasmidFinder
-#     itself applies to Enterobacterales replicons. abricate's default of 80%
-#     also reports weak hits to neighbouring replicon variants (on the test
-#     isolate, an IncFII variant at 85% beside the true IncFII(S) at 98%).
+#   plasmidfinder: reported from 80% identity and 60% coverage, and marked low
+#     identity below 95%, the cutoff PlasmidFinder itself applies to
+#     Enterobacterales replicons. Both ends matter. In 36 Salmonella Dublin
+#     isolates a 95% floor hid real small Col plasmids (92% and 85% identity),
+#     while an unmarked 80% floor listed a neighbouring IncFII variant at 85%
+#     beside the true IncFII(S) at 98% as if the two were equally sure.
 #   vfdb: abricate's defaults, 80% identity and 80% coverage.
 ABRICATE_DATABASES: Dict[str, Screen] = {
-    "plasmidfinder": Screen("plasmid_replicons", min_identity=95, min_coverage=60),
+    "plasmidfinder": Screen("plasmid_replicons", min_identity=80, min_coverage=60,
+                            confident_identity=95),
     "vfdb": Screen("virulence_genes", min_identity=80, min_coverage=80),
 }
 
@@ -155,6 +160,7 @@ def parse_sistr_json(text: str) -> Dict[str, Any]:
         "cgmlst_matching_alleles": rec.get("cgmlst_matching_alleles"),
         "cgmlst_found_loci": rec.get("cgmlst_found_loci"),
         "cgmlst_distance": rec.get("cgmlst_distance"),
+        "cgmlst_genome_match": rec.get("cgmlst_genome_match"),
         "cgmlst_subspecies": rec.get("cgmlst_subspecies"),
         "qc_status": rec.get("qc_status"),
         "qc_messages": rec.get("qc_messages"),
@@ -213,6 +219,55 @@ def parse_abricate_tab(text: str) -> List[Dict[str, Any]]:
             "accession": row.get("ACCESSION", ""),
             "product": row.get("PRODUCT", ""),
         })
+    return hits
+
+
+# A low-identity hit this close to a confident hit of the same replicon family
+# is taken as a second, weaker match to that replicon.
+BESIDE_WINDOW_BP = 1000
+
+
+def _family(name: str) -> str:
+    """IncFII(S) and IncFII(pAR0022) -> IncFII; Col(pHAD28) -> Col."""
+    return name.split("(")[0].strip()
+
+
+def _position(hit: Dict[str, Any]) -> Optional[int]:
+    try:
+        return (int(hit["start"]) + int(hit["end"])) // 2
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def mark_low_identity(hits: List[Dict[str, Any]], screen: Screen) -> List[Dict[str, Any]]:
+    """Set two fields on each hit.
+
+    low_identity: True when the screen has a confident cutoff and the hit's
+      identity is under it.
+    beside: for a low-identity hit, the confident hit of the same family on
+      the same contig within BESIDE_WINDOW_BP, else None. Such a hit is a weak
+      second match to a replicon already named (in Salmonella Dublin, an
+      IncFII variant at 85% next to IncFII(S) at 98% in every isolate), so the
+      summaries leave it out. It stays in typing.json and in the report table."""
+    for hit in hits:
+        identity = hit.get("identity")
+        hit["low_identity"] = bool(
+            screen.confident_identity is not None
+            and identity is not None and identity < screen.confident_identity)
+        hit["beside"] = None
+    confident = [h for h in hits if not h["low_identity"]]
+    for hit in hits:
+        if not hit["low_identity"]:
+            continue
+        here = _position(hit)
+        for other in confident:
+            there = _position(other)
+            if (here is not None and there is not None
+                    and other.get("contig") == hit.get("contig")
+                    and _family(other.get("gene", "")) == _family(hit.get("gene", ""))
+                    and abs(here - there) <= BESIDE_WINDOW_BP):
+                hit["beside"] = other.get("gene")
+                break
     return hits
 
 
@@ -349,7 +404,8 @@ def run_sistr(assembly: Path, outdir: Path, typing_root: Optional[str], threads:
         log(f"WARNING: SISTR output could not be read: {exc}")
         return None
     result["version"] = _version(tool, ["--version"])
-    log(f"  SISTR: serovar {result.get('serovar')}, cgMLST ST {result.get('cgmlst_st')}, "
+    log(f"  SISTR: serovar {result.get('serovar')}, cgMLST {result.get('cgmlst_matching_alleles')} "
+        f"of {result.get('cgmlst_found_loci')} alleles match the nearest genome, "
         f"QC {result.get('qc_status')}")
     return result
 
@@ -400,8 +456,13 @@ def run_abricate(assembly: Path, outdir: Path, typing_root: Optional[str], datab
     if rc != 0:
         log(f"WARNING: abricate --db {database} failed (rc={rc}).")
         return None
-    hits = parse_abricate_tab(out.read_text(encoding="utf-8", errors="replace"))
-    log(f"  abricate {database}: {len(hits)} hit(s)")
+    hits = mark_low_identity(
+        parse_abricate_tab(out.read_text(encoding="utf-8", errors="replace")), screen)
+    low = sum(1 for h in hits if h["low_identity"] and not h["beside"])
+    beside = sum(1 for h in hits if h["beside"])
+    log(f"  abricate {database}: {len(hits)} hit(s)"
+        + (f", {low} below {screen.confident_identity}% identity" if low else "")
+        + (f", {beside} weak second match(es) beside a confident hit" if beside else ""))
     return hits
 
 
@@ -547,7 +608,8 @@ def run_all(
                 summary["versions"]["abricate_databases"] = _abricate_db_versions(typing_root)
                 summary["thresholds"] = {
                     database: {"min_identity": screen.min_identity,
-                               "min_coverage": screen.min_coverage}
+                               "min_coverage": screen.min_coverage,
+                               "confident_identity": screen.confident_identity}
                     for database, screen in ABRICATE_DATABASES.items()
                 }
         else:

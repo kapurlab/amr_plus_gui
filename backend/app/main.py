@@ -958,8 +958,8 @@ def _row_metrics(run_dir: Path) -> Dict[str, Any]:
 
 
 _TYPING_METRIC_KEYS = ("serovar_sistr", "serovar_seqsero2", "serovar_agreement",
-                       "cgmlst_st", "replicons", "virulence_genes",
-                       "completeness", "contamination")
+                       "cgmlst_match", "cgmlst_nearest", "replicons", "replicons_low",
+                       "virulence_genes", "completeness", "contamination")
 
 
 def _typing_metrics(run_dir: Path) -> Dict[str, Any]:
@@ -976,11 +976,17 @@ def _typing_metrics(run_dir: Path) -> Dict[str, Any]:
     if not isinstance(typing, dict):
         return m
 
-    def names(key: str) -> Optional[List[str]]:
+    def names(key: str, low_identity: Optional[bool] = None) -> Optional[List[str]]:
         if key not in typing:
             return None
         seen: List[str] = []
         for hit in typing.get(key) or []:
+            # A weak second match beside a confident hit is never summarized
+            # (bin/typing_steps.py, mark_low_identity).
+            if (hit or {}).get("beside"):
+                continue
+            if low_identity is not None and bool((hit or {}).get("low_identity")) != low_identity:
+                continue
             gene = str((hit or {}).get("gene") or "").strip()
             if gene and gene not in seen:
                 seen.append(gene)
@@ -991,10 +997,18 @@ def _typing_metrics(run_dir: Path) -> Dict[str, Any]:
     m["serovar_sistr"] = sistr.get("serovar") or None
     m["serovar_seqsero2"] = (serovar.get("seqsero2") or {}).get("serovar") or None
     m["serovar_agreement"] = serovar.get("agreement") or None
-    m["cgmlst_st"] = sistr.get("cgmlst_st")
-    replicons = names("plasmid_replicons")
+    # The count of alleles shared with the nearest genome, not SISTR's cgMLST
+    # ST: that number is a hash of the allele profile and changes when one
+    # allele assembles differently (bin/reporting, cgmlst_match_text).
+    matching, found = sistr.get("cgmlst_matching_alleles"), sistr.get("cgmlst_found_loci")
+    if matching is not None:
+        m["cgmlst_match"] = f"{matching}/{found}" if found is not None else str(matching)
+    m["cgmlst_nearest"] = sistr.get("cgmlst_genome_match") or None
+    replicons = names("plasmid_replicons", low_identity=False)
     if replicons is not None:
         m["replicons"] = ", ".join(sorted(replicons)) if replicons else "none"
+        low = names("plasmid_replicons", low_identity=True) or []
+        m["replicons_low"] = ", ".join(sorted(low)) if low else None
     virulence = names("virulence_genes")
     if virulence is not None:
         m["virulence_genes"] = len(virulence)
@@ -1083,8 +1097,12 @@ _EXPORT_COLUMNS = [
     ("mlst", "MLST"), ("genes", "AMR genes"), ("point", "Point mutations"),
     ("plus", "Plus elements"),
     ("serovar_sistr", "Serovar (SISTR)"), ("serovar_seqsero2", "Serovar (SeqSero2)"),
-    ("serovar_agreement", "Serovar agreement"), ("cgmlst_st", "cgMLST ST"),
-    ("replicons", "Plasmid replicons"), ("virulence_genes", "Virulence genes"),
+    ("serovar_agreement", "Serovar agreement"),
+    ("cgmlst_match", "cgMLST alleles matching nearest genome"),
+    ("cgmlst_nearest", "Nearest genome by cgMLST"),
+    ("replicons", "Plasmid replicons"),
+    ("replicons_low", "Plasmid replicons, low identity"),
+    ("virulence_genes", "Virulence genes"),
     ("completeness", "CheckM2 completeness (%)"), ("contamination", "CheckM2 contamination (%)"),
     ("run_dir", "Run directory"),
 ]

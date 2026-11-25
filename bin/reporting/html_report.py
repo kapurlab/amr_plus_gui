@@ -104,20 +104,24 @@ def _amr_table(rows: List[Dict[str, str]]) -> str:
 
 
 def _hits_table(hits: List[Dict[str, Any]]) -> str:
-    head = ("Gene", "% Ident", "% Cov", "Contig", "Accession", "Product")
+    head = ("Gene", "% Ident", "% Cov", "Contig", "Accession", "Product", "Note")
     thead = "".join(f"<th>{_e(h)}</th>" for h in head)
     body = []
-    for h in hits:
+    # Confident hits first, then by identity, so the sure calls lead the table.
+    ordered = sorted(hits, key=lambda h: (bool(h.get("low_identity")), -(h.get("identity") or 0)))
+    for h in ordered:
         cells = (h.get("gene"), _fmt_pct(h.get("identity")), _fmt_pct(h.get("coverage")),
-                 h.get("contig"), h.get("accession"), h.get("product"))
-        body.append("<tr>" + "".join(f"<td>{_e(c)}</td>" for c in cells) + "</tr>")
+                 h.get("contig"), h.get("accession"), h.get("product"),
+                 (f"low identity, weak second match beside {h.get('beside')}" if h.get("beside")
+                  else "low identity" if h.get("low_identity") else ""))
+        body.append("<tr>" + "".join(f"<td>{_e(c) if c != '' else ''}</td>" for c in cells) + "</tr>")
     return (f'<table class="grid"><thead><tr>{thead}</tr></thead>'
             f'<tbody>{"".join(body)}</tbody></table>')
 
 
 def _typing_sections(typing: Dict[str, Any]) -> List[str]:
     """Serovar, plasmid replicon and virulence sections for the steps that ran."""
-    from . import _AGREEMENT_TEXT, gene_names
+    from . import _AGREEMENT_TEXT, cgmlst_match_text, gene_names, replicon_confident_cutoff
 
     parts: List[str] = []
     serovar = typing.get("serovar") or {}
@@ -136,11 +140,8 @@ def _typing_sections(typing: Dict[str, Any]) -> List[str]:
             ("Antigenic profile (SeqSero2)", seqsero2.get("antigenic_profile")),
             ("Antigenic formula (SISTR)", sistr.get("antigenic_formula")),
             ("Serogroup (SISTR)", sistr.get("serogroup")),
-            ("cgMLST ST (SISTR)", sistr.get("cgmlst_st")),
-            ("cgMLST alleles matching the nearest genome (SISTR)",
-             f'{sistr.get("cgmlst_matching_alleles")} of {sistr.get("cgmlst_found_loci")} loci found'
-             if sistr.get("cgmlst_matching_alleles") is not None and sistr.get("cgmlst_found_loci") is not None
-             else sistr.get("cgmlst_matching_alleles")),
+            ("cgMLST alleles matching the nearest genome (SISTR)", cgmlst_match_text(sistr) if sistr else None),
+            ("Nearest genome by cgMLST (SISTR)", sistr.get("cgmlst_genome_match")),
             ("SISTR QC", sistr.get("qc_status")),
             ("SeqSero2 note", seqsero2.get("note")),
         ]))
@@ -152,6 +153,13 @@ def _typing_sections(typing: Dict[str, Any]) -> List[str]:
         parts.append("<h2>Plasmid replicons</h2>")
         if hits:
             parts.append(f'<div class="scroll">{_hits_table(hits)}</div>')
+            if any(h.get("low_identity") for h in hits):
+                cut = replicon_confident_cutoff(typing)
+                parts.append(f'<p class="small">Hits marked low identity match a reference replicon '
+                             f'at under {cut}%. One can be a real but divergent replicon, such as a '
+                             f'small Col plasmid, so check its contig before reporting it. A hit '
+                             f'noted as a weak second match lies within 1 kb of a confident hit of '
+                             f'the same family and is left out of the summary.</p>')
         else:
             parts.append('<p class="muted">No plasmid replicons detected.</p>')
     if "virulence_genes" in typing:
@@ -354,8 +362,10 @@ def _typing_method_rows(typing: Dict[str, Any]) -> List[Tuple[str, Any]]:
         rows.append(("abricate databases",
                      ", ".join(f"{name} ({date})" for name, date in sorted(databases.items()))))
     for database, cut in sorted(thresholds.items()):
-        rows.append((f"abricate {database} thresholds",
-                     f'identity ≥ {cut.get("min_identity")}%, coverage ≥ {cut.get("min_coverage")}%'))
+        text = f'identity ≥ {cut.get("min_identity")}%, coverage ≥ {cut.get("min_coverage")}%'
+        if cut.get("confident_identity"):
+            text += f'; marked low identity below {cut.get("confident_identity")}%'
+        rows.append((f"abricate {database} thresholds", text))
     return rows
 
 

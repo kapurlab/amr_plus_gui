@@ -307,6 +307,15 @@ def test_fields_offered_come_from_results_and_the_sheet(tmp_path):
     assert info["settings"]["color_by"] == "mlst" and info["settings"]["group_by"] == []
 
 
+def test_a_column_of_four_digit_numbers_is_not_taken_for_dates(tmp_path):
+    project = _project(tmp_path)
+    (project / "sample_crosswalk.tsv").write_text(
+        "run\tisolate\tlab_st\tyear\nS1\tISO-1\t3734\t2023\nS2\tISO-2\t4030\t2024\nS3\tISO-3\t2005\t2024\n")
+    fields = {f["field"] for f in cohort_report.project_fields(project)["fields"]}
+    assert "lab_st" in fields and "year" in fields
+    assert "lab_st|year" not in fields and "year|year" not in fields
+
+
 def test_only_columns_that_tell_isolates_apart_are_printed():
     isolates = [cohort_report.Isolate(sample=s, label=l, meta=m) for s, l, m in [
         ("R1", "ISO-1", {"run": "R1", "strain": "ISO-1", "organism": "S. enterica", "state": "PR", "region": "PR", "host": "", "breed": "Nelore"}),

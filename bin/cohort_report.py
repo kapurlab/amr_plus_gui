@@ -346,6 +346,7 @@ SETTINGS_NAME = "settings.json"
 # Fields read from the results themselves; every other field is a metadata column.
 RESULT_FIELDS = {"mlst": "MLST sequence type", "organism": "Organism", "serovar": "Serovar"}
 _NO_VALUE = {"", "missing", "not collected", "not applicable", "not provided", "unknown", "n/a", "na"}
+_DATE = re.compile(r"(?:19|20)\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?(?:[T ].*)?$")
 
 
 @dataclass
@@ -437,8 +438,11 @@ def list_fields(isolates: List["Isolate"], columns: List[str]) -> List[Dict[str,
         add(spec, "results")
     for column in columns:
         add(column, "metadata")
+        # Offer the year of a date column. A date here has a month as well as a
+        # year: a bare four-digit number may be a year, but it may be a sequence
+        # type or a herd number, and a column of years needs no "year of" anyway.
         dated = [v for v in (field_value(i, column) for i in isolates) if v]
-        if dated and sum(bool(re.match(r"\d{4}(-\d{1,2}){0,2}$", v)) for v in dated) * 2 >= len(dated):
+        if dated and sum(bool(_DATE.match(v)) for v in dated) * 2 >= len(dated):
             add(f"{column}|year", "metadata")
     return out
 

@@ -55,17 +55,31 @@ def _text_width(text: str, size: float) -> float:
 # ---------------------------------------------------------------------------
 def stacked_bars(counts: Dict[str, Dict[str, int]], palette: Dict[str, str],
                  lineage_label: Dict[str, str], title: str) -> str:
-    """counts[group][lineage] = number of isolates. Groups are drawn largest
-    first, and each bar is stacked in palette order."""
-    groups = sorted(counts, key=lambda g: (-sum(counts[g].values()), g))
-    if not groups:
+    """counts[group][lineage] = number of isolates. Each bar is stacked in
+    palette order. Groups that are all numbers (years, weeks, herd sizes) run
+    in number order; any other groups are drawn largest first."""
+    if not counts:
         return ""
+
+    def as_number(name: str) -> Optional[float]:
+        try:
+            return float(name)
+        except ValueError:
+            return None
+
+    numeric = [g for g in counts if as_number(g) is not None]
+    if len(numeric) >= 2 and len(numeric) >= len(counts) - 1:
+        # At most one group is not a number ("not given"); it goes last.
+        groups = sorted(numeric, key=as_number) + [g for g in counts if as_number(g) is None]
+    else:
+        groups = sorted(counts, key=lambda g: (-sum(counts[g].values()), g))
     order = [k for k in palette if any(counts[g].get(k) for g in groups)]
     top = max(sum(counts[g].values()) for g in groups)
     bar_w, gap, plot_h, left, head = 46, 26, 190, 20, 34
     width = left * 2 + len(groups) * (bar_w + gap)
     legend_w = max(_text_width(lineage_label.get(k, k), 11) for k in order) + 40
-    width = max(width, int(len(order) * legend_w) + left * 2, 320)
+    width = max(width, int(len(order) * legend_w) + left * 2,
+                int(_text_width(title, 13) * 1.08) + left * 2, 320)
     height = head + plot_h + 64
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
              f'width="{width}" height="{height}" style="{FONT}" role="img" aria-label="{esc(title)}">',

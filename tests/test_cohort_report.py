@@ -90,6 +90,28 @@ def test_distance_matrix_is_symmetric_with_a_zero_diagonal():
     assert m[0][3] is None and m[3][0] is None
 
 
+def _bar_order(svg: str):
+    import re
+    return re.findall(r'font-weight="600" text-anchor="middle" fill="[^"]+">([^<]+)</text>', svg)
+
+
+def test_numbered_groups_run_in_order_and_named_groups_largest_first():
+    palette = cohort_figures.lineage_palette(["a"])
+    years = {"2024": {"a": 9}, "2023": {"a": 4}, "2025": {"a": 1}, "not given": {"a": 20}}
+    assert _bar_order(cohort_figures.stacked_bars(years, palette, {"a": "a"}, "t")) == ["2023", "2024", "2025", "not given"]
+    states = {"PR": {"a": 2}, "SP": {"a": 9}, "MG": {"a": 5}}
+    assert _bar_order(cohort_figures.stacked_bars(states, palette, {"a": "a"}, "t")) == ["SP", "MG", "PR"]
+
+
+def test_a_long_chart_title_fits_inside_the_figure():
+    import re
+    palette = cohort_figures.lineage_palette(["a"])
+    title = "MLST sequence type by collection_date (year): 36 isolates"
+    svg = cohort_figures.stacked_bars({"2023": {"a": 1}, "2024": {"a": 2}}, palette, {"a": "a"}, title)
+    width = int(re.search(r'viewBox="0 0 (\d+) ', svg).group(1))
+    assert width >= cohort_figures._text_width(title, 13) + 20
+
+
 def test_heat_colour_runs_from_pale_yellow_to_maroon():
     assert cohort_figures.heat_color(0.0) == "#FFFADE"
     assert cohort_figures.heat_color(1.0) == "#70102C"

@@ -39,6 +39,10 @@ Authoritative build spec: `SPEC_BUILD.md`.
     src/App.css    theme — copied verbatim from Kraken; DO NOT restyle
     vite.config.js base: "./" — DO NOT CHANGE
     dist/          built output served by uvicorn (rebuild after edits)
+    cohort_report.py   one report across a project's finished samples ->
+                       <project>/cohort_report/ (HTML, PDF, table, checks)
+    cohort_tree.py     Newick reading, rooting and layout for that report
+    cohort_figures.py  its figures as inline SVG (bars, tree + matrix, heatmap)
   conda_setup/environment.yml   env name amr_plus
   conda_setup/typing/*.yml      one env per typing tool (they do not solve together)
   deploy/install.sh, INSTALL.md
@@ -97,6 +101,17 @@ note, so the GUI behaves as before on a machine without them. The serovar and
 abricate steps run only when the organism is Salmonella. A step that did not
 run adds no row to the report, so a missing tool never reads as a negative
 result.
+
+### 8. The cohort report reads results; it does not recompute them
+`bin/cohort_report.py --project DIR` (the "Build cohort report" button) reads
+each `amr/<sample>/` folder, an optional metadata sheet
+(`sample_crosswalk.tsv` or `metadata.*` in the project or its `download/`),
+and the newest vSNP Step 2 run that holds a tree. It writes
+`<project>/cohort_report/`. Every count in its text is computed from the
+per-isolate table, and `cohort_checks.json` records where the layers do not
+line up (an isolate with no typing, a tree tip with no isolate, a metadata row
+with no results). Display names are taken from the metadata column that matches
+the tree's tips, so a vSNP metadata rename needs no extra setting.
 
 ## Development Workflow
 

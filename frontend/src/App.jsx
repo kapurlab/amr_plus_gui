@@ -4,6 +4,7 @@ import { askOnPage } from "./pageAsk.jsx";
 import ThemeToggle from "./ThemeToggle";
 import CitationFooter from "./Citations";
 import ResultsPane from "./ResultsPane";
+import CohortReport from "./CohortReport";
 import { PaneSplitters } from "./SplitPane";
 import { ResizableTable, Grip } from "./ResizableTable";
 import { useResults, useVisibleSelection } from "./useResults";
@@ -1507,6 +1508,14 @@ export default function App() {
                 setShowDetail(true);
               }}
             />
+          </div>
+        )}
+
+        {/* One report across every finished sample of the project. */}
+        {showResults && activeProject && (
+          <div className="row-grid row-grid-single">
+            <CohortReport project={activeProject}
+                          sampleCount={(results?.rows || []).filter((r) => r.status === "done").length} />
           </div>
         )}
 

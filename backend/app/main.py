@@ -1238,6 +1238,57 @@ def api_project_file(name: str, path: str = Query(...), inline: int = 0):
 
 
 # ---------------------------------------------------------------------------
+# Cohort report: one report across every finished sample of a project, built
+# by bin/cohort_report.py into <project>/cohort_report/.
+# ---------------------------------------------------------------------------
+_COHORT_DIRNAME = "cohort_report"
+_COHORT_FILE_LABELS = [
+    ("cohort_report.html", "Report (HTML)"),
+    ("cohort_report.pdf", "Report (PDF)"),
+    ("cohort_table.xlsx", "Per-isolate table (Excel)"),
+    ("cohort_table.tsv", "Per-isolate table (TSV)"),
+    ("cohort_checks.json", "Checks (JSON)"),
+]
+
+
+@app.get("/api/projects/{name}/cohort-report")
+def api_cohort_report_status(name: str):
+    """What the last cohort report build left: its files and its checks."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    out = project_dir / _COHORT_DIRNAME
+    files = [{"name": fname, "label": label, "path": str(out / fname),
+              "openable": _can_open_inline(fname)}
+             for fname, label in _COHORT_FILE_LABELS if (out / fname).is_file()]
+    checks: Dict[str, Any] = {}
+    try:
+        checks = json.loads((out / "cohort_checks.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    return JSONResponse({"project": name, "exists": (out / "cohort_report.html").is_file(),
+                         "files": files, "checks": checks})
+
+
+@app.post("/api/projects/{name}/cohort-report")
+def api_cohort_report_build(name: str):
+    """Start a job that rebuilds the project's cohort report."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    if not (project_dir / _TOOL_SUBDIR).is_dir():
+        raise HTTPException(400, "This project has no finished samples yet. Run at least one first.")
+    for existing in job_manager.list_jobs():
+        if existing.get("status") == "running" and existing.get("name", "").startswith(f"{name} — cohort report"):
+            raise HTTPException(409, "A cohort report is already being built for this project.")
+    command = [sys.executable, "-u", str(_BIN_DIR / "cohort_report.py"), "--project", str(project_dir)]
+    env = {"PYTHONPATH": str(_BIN_DIR), "PATH": os.environ.get("PATH", ""), "PYTHONUNBUFFERED": "1"}
+    job_id = job_manager.start_job(name=f"{name} — cohort report", command=command,
+                                   cwd=project_dir, env=env)
+    return JSONResponse({"job_id": job_id})
+
+
+# ---------------------------------------------------------------------------
 # Organism options — valid AMRFinderPlus --organism tokens.
 #
 # The authoritative list comes from `amrfinder -l`, which is DB-version

@@ -1,0 +1,9 @@
+# CheckM2: genome completeness and contamination (bin/typing_steps.py).
+# Installed by deploy/setup_typing.sh into <typing root>/checkm2. Its DIAMOND
+# database is downloaded separately into <db root>/checkm2.
+name: typing_checkm2
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - checkm2=1.1.0

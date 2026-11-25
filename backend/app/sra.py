@@ -119,6 +119,26 @@ def write_crosswalk_tsv(download_dir: Path, mapping: List[tuple[str, List[str]]]
     return crosswalk_path
 
 
+def downloaded_runs(download_dir: Path) -> set:
+    """The run accessions an SRA download has fetched into this folder, read
+    from the sra_crosswalk.tsv that write_crosswalk_tsv keeps there. Empty when
+    the folder has no such record: its files were uploaded or linked."""
+    runs: set = set()
+    try:
+        lines = (Path(download_dir) / "sra_crosswalk.tsv").read_text(
+            encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return runs
+    for line in lines:
+        if line.startswith("#") or "\t" not in line:
+            continue
+        resolved = line.split("\t", 1)[1]
+        if resolved.strip() == "resolved_runs":
+            continue
+        runs.update(r.strip() for r in resolved.split(",") if r.strip())
+    return runs
+
+
 def _expand_single(accession: str) -> List[str]:
     try:
         xml_data = _eutils_get(
@@ -151,11 +171,18 @@ def build_download_script(
     accessions: List[str],
     allow_insecure_https: bool,
     concurrency: int = 4,
+    after_download: str = "",
 ) -> str:
     """Generate a bash script that downloads each accession via xargs -P
     parallelism. concurrency caps simultaneous workers — past ~4-6 NCBI's
     per-IP S3 throttling and the local fasterq-dump CPU/disk start to bite,
-    so 4 is the documented sweet spot."""
+    so 4 is the documented sweet spot.
+
+    after_download is shell text run once the downloads and their summary are
+    done, just before the script decides its exit code. It goes there, and is
+    not appended to the script, because the script ends in an explicit `exit`:
+    anything after that never runs. Its own exit status is ignored, so it can
+    never change whether the download counts as a success."""
     curl_insecure = "-k" if allow_insecure_https else ""
     concurrency = max(1, int(concurrency))
     acc_block = "\n".join([f'    "{a}"' for a in accessions])
@@ -428,6 +455,7 @@ else
   echo "[FAILED] No .fastq.gz files found after download"
 fi
 
+{after_download}
 if [ "$FAILED_COUNT" -gt 0 ] && [ "$SUCCEEDED" -eq 0 ]; then
   exit 1
 fi

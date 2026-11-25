@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -36,12 +37,14 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Respons
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .config import DEFAULTS, load_config, save_config, shared_projects_root
+from .config import (DEFAULTS, ITOL_KEY_PATH, itol_api_key, load_config, save_config,
+                     shared_projects_root)
 from .jobs import JobManager
 from .request_safety import install_request_safety
 from .sra import (
     SRAExpansionError,
     build_download_script,
+    downloaded_runs,
     expand_accessions_with_mapping,
     write_crosswalk_tsv,
 )
@@ -292,13 +295,21 @@ def _list_fastq_pairs(download_dir: Path) -> List[Dict]:
     """Return samples as {sample, paired, r1, r1_name, r2, r2_name} dicts.
 
     Handles both Illumina (_R1/_R2) and SRA (_1/_2) naming conventions.
-    Files with no read suffix are treated as single-end.
+    Files with no read suffix are treated as single-end, with one exception:
+    an SRA run can come as a pair plus <run>.fastq.gz, the reads whose mate
+    was not submitted or did not pass. Beside its complete pair that file is
+    not a sample of its own. It is named on the pair as `unpaired`.
+
+    The exception is for runs the folder's SRA download record names, and for
+    nothing else. A long-read file a lab has put beside an Illumina pair of
+    the same name is a sample in its own right and stays listed.
     """
     try:
         all_fq = sorted(download_dir.glob("*.fastq.gz"))
     except PermissionError:
         return []
 
+    from_sra = downloaded_runs(download_dir)
     groups: Dict[str, Dict] = {}
     for fq in all_fq:
         base, tag = _strip_read_tag(fq.name)
@@ -326,7 +337,10 @@ def _list_fastq_pairs(download_dir: Path) -> List[Dict]:
                 "r2": str(eff_r2) if eff_r2 else None,
                 "r2_name": eff_r2.name if eff_r2 else None,
                 "r2_size": eff_r2.stat().st_size if eff_r2 else None,
+                "unpaired": [fq.name for fq in g["extras"]] if (r1 and r2 and base in from_sra) else [],
             })
+        if r1 and r2 and base in from_sra:
+            continue
         for fq in g["extras"]:
             pairs.append({
                 "sample": fq.name[:-len(".fastq.gz")],
@@ -335,6 +349,7 @@ def _list_fastq_pairs(download_dir: Path) -> List[Dict]:
                 "r1_size": fq.stat().st_size,
                 "r2": None, "r2_name": None,
                 "r2_size": None,
+                "unpaired": [],
             })
 
     return pairs
@@ -480,6 +495,26 @@ def api_project_link_local(name: str, payload: LinkLocalRequest):
     return JSONResponse({"linked": count})
 
 
+def _sample_metadata_step(project_dir: Path, accessions: List[str]) -> str:
+    """Shell text for the end of an SRA download: fill the project's metadata
+    sheet (<project>/sample_metadata.tsv) from the runs' public records.
+
+    build_download_script places it before the script's own `exit`; text
+    appended after the script would never run. `|| true`: the reads are what
+    was asked for, and a lookup that fails (no route to NCBI, a run too new to
+    be listed) must not turn a finished download into a failed job. The sheet
+    can be fetched again later."""
+    if not accessions:
+        return ""
+    return (
+        "# Public metadata for the downloaded runs -> <project>/sample_metadata.tsv\n"
+        'echo ""; echo "== Sample metadata =="\n'
+        f"{shlex.quote(sys.executable)} -u {shlex.quote(str(_BIN_DIR / 'sample_metadata.py'))} "
+        f"--project {shlex.quote(str(project_dir))} fetch --source sra "
+        f"--samples {' '.join(shlex.quote(a) for a in accessions)} || true\n"
+    )
+
+
 class SraRequest(BaseModel):
     accessions: List[str]
     folder: Optional[str] = None
@@ -506,11 +541,17 @@ def api_project_sra_download(name: str, payload: SraRequest):
         write_crosswalk_tsv(download_root, mapping)
     except OSError as e:
         logger.warning("Failed to write sra_crosswalk.tsv: %s", e)
-    script = build_download_script(download_root, expanded, allow_insecure_https=False)
+    script = build_download_script(download_root, expanded, allow_insecure_https=False,
+                                   after_download=_sample_metadata_step(project_dir, expanded))
     script_path = download_root / "download_sra.sh"
     script_path.write_text(script, encoding="utf-8")
     script_path.chmod(0o755)
     env = {"PATH": os.environ.get("PATH", "")}
+    # The NCBI contact goes to the job through its environment, never into the
+    # script, so it does not end up in a file under the project.
+    for key in ("NCBI_EMAIL", "NCBI_API_KEY"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
     job_id = job_manager.start_job(
         name=f"sra_download — {name}",
         command=["bash", str(script_path)],
@@ -935,6 +976,7 @@ def _row_metrics(run_dir: Path) -> Dict[str, Any]:
     table renders an em dash rather than inventing a zero."""
     m: Dict[str, Any] = {"organism": None, "genes": None, "point": None,
                          "plus": None, "mlst": None}
+    m.update(_typing_metrics(run_dir))
     try:
         org = json.loads((run_dir / "organism_detection.json").read_text(encoding="utf-8"))
         m["organism"] = org.get("organism_token") or org.get("dominant_species") or None
@@ -953,6 +995,67 @@ def _row_metrics(run_dir: Path) -> Dict[str, Any]:
             m["plus"] = s.get("plus_count")
         except Exception:
             pass
+    return m
+
+
+_TYPING_METRIC_KEYS = ("serovar_sistr", "serovar_seqsero2", "serovar_agreement",
+                       "cgmlst_match", "cgmlst_nearest", "replicons", "replicons_low",
+                       "virulence_genes", "completeness", "contamination")
+
+
+def _typing_metrics(run_dir: Path) -> Dict[str, Any]:
+    """Per-sample typing columns from typing.json (bin/typing_steps.py).
+
+    Every key is present and None when its step did not run, so a table or an
+    export shows a blank and never a made-up value. An empty replicon list is
+    a real negative and is reported as "none"."""
+    m: Dict[str, Any] = {k: None for k in _TYPING_METRIC_KEYS}
+    try:
+        typing = json.loads((run_dir / "typing.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return m
+    if not isinstance(typing, dict):
+        return m
+
+    def names(key: str, low_identity: Optional[bool] = None) -> Optional[List[str]]:
+        if key not in typing:
+            return None
+        seen: List[str] = []
+        for hit in typing.get(key) or []:
+            # A weak second match beside a confident hit is never summarized
+            # (bin/typing_steps.py, mark_low_identity).
+            if (hit or {}).get("beside"):
+                continue
+            if low_identity is not None and bool((hit or {}).get("low_identity")) != low_identity:
+                continue
+            gene = str((hit or {}).get("gene") or "").strip()
+            if gene and gene not in seen:
+                seen.append(gene)
+        return seen
+
+    serovar = typing.get("serovar") or {}
+    sistr = serovar.get("sistr") or {}
+    m["serovar_sistr"] = sistr.get("serovar") or None
+    m["serovar_seqsero2"] = (serovar.get("seqsero2") or {}).get("serovar") or None
+    m["serovar_agreement"] = serovar.get("agreement") or None
+    # The count of alleles shared with the nearest genome, not SISTR's cgMLST
+    # ST: that number is a hash of the allele profile and changes when one
+    # allele assembles differently (bin/reporting, cgmlst_match_text).
+    matching, found = sistr.get("cgmlst_matching_alleles"), sistr.get("cgmlst_found_loci")
+    if matching is not None:
+        m["cgmlst_match"] = f"{matching}/{found}" if found is not None else str(matching)
+    m["cgmlst_nearest"] = sistr.get("cgmlst_genome_match") or None
+    replicons = names("plasmid_replicons", low_identity=False)
+    if replicons is not None:
+        m["replicons"] = ", ".join(sorted(replicons)) if replicons else "none"
+        low = names("plasmid_replicons", low_identity=True) or []
+        m["replicons_low"] = ", ".join(sorted(low)) if low else None
+    virulence = names("virulence_genes")
+    if virulence is not None:
+        m["virulence_genes"] = len(virulence)
+    checkm2 = typing.get("checkm2") or {}
+    m["completeness"] = checkm2.get("completeness")
+    m["contamination"] = checkm2.get("contamination")
     return m
 
 
@@ -1033,7 +1136,16 @@ _EXPORT_COLUMNS = [
     ("sample", "Sample"), ("status", "Status"), ("run_date", "Run date"),
     ("qc", "QC"), ("qc_reasons", "QC notes"), ("organism", "Organism"),
     ("mlst", "MLST"), ("genes", "AMR genes"), ("point", "Point mutations"),
-    ("plus", "Plus elements"), ("run_dir", "Run directory"),
+    ("plus", "Plus elements"),
+    ("serovar_sistr", "Serovar (SISTR)"), ("serovar_seqsero2", "Serovar (SeqSero2)"),
+    ("serovar_agreement", "Serovar agreement"),
+    ("cgmlst_match", "cgMLST alleles matching nearest genome"),
+    ("cgmlst_nearest", "Nearest genome by cgMLST"),
+    ("replicons", "Plasmid replicons"),
+    ("replicons_low", "Plasmid replicons, low identity"),
+    ("virulence_genes", "Virulence genes"),
+    ("completeness", "CheckM2 completeness (%)"), ("contamination", "CheckM2 contamination (%)"),
+    ("run_dir", "Run directory"),
 ]
 
 
@@ -1048,6 +1160,7 @@ def _export_records(name, start, end, q):
             "qc_reasons": "; ".join((r.get("flags") or {}).get("reasons", [])),
             "organism": m.get("organism") or "", "mlst": m.get("mlst") or "",
             "genes": m.get("genes"), "point": m.get("point"), "plus": m.get("plus"),
+            **{k: m.get(k) for k in _TYPING_METRIC_KEYS},
             "run_dir": r.get("run_dir", ""),
         }
 
@@ -1163,6 +1276,205 @@ def api_project_file(name: str, path: str = Query(...), inline: int = 0):
     disposition = "inline" if want_inline else "attachment"
     headers = {"Content-Disposition": f'{disposition}; filename="{target.name}"'}
     return FileResponse(target, media_type=media_type, headers=headers)
+
+
+# ---------------------------------------------------------------------------
+# Cohort report: one report across every finished sample of a project, built
+# by bin/cohort_report.py into <project>/cohort_report/.
+# ---------------------------------------------------------------------------
+_COHORT_DIRNAME = "cohort_report"
+_COHORT_FILE_LABELS = [
+    ("cohort_report.html", "Report (HTML)"),
+    ("cohort_report.pdf", "Report (PDF)"),
+    ("cohort_table.xlsx", "Per-isolate table (Excel)"),
+    ("cohort_table.tsv", "Per-isolate table (TSV)"),
+    ("itol_bundle.zip", "Tree and annotations for iTOL (zip)"),
+    ("itol_batch.zip", "For iTOL batch upload (zip)"),
+    ("cohort_checks.json", "Checks (JSON)"),
+]
+
+
+@app.get("/api/projects/{name}/sample-metadata")
+def api_sample_metadata_status(name: str):
+    """What the project's metadata sheet holds, and where its columns came from."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    sheet = project_dir / "sample_metadata.tsv"
+    columns: List[str] = []
+    rows = 0
+    if sheet.is_file():
+        try:
+            lines = [ln for ln in sheet.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+            columns = lines[0].split("\t") if lines else []
+            rows = max(0, len(lines) - 1)
+        except OSError:
+            pass
+    provenance: Dict[str, Any] = {}
+    try:
+        provenance = json.loads((project_dir / "sample_metadata.provenance.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    return JSONResponse({"project": name, "exists": sheet.is_file(), "path": str(sheet),
+                         "columns": columns, "rows": rows,
+                         "column_sources": provenance.get("columns", {}),
+                         "history": (provenance.get("history") or [])[-5:]})
+
+
+@app.post("/api/projects/{name}/sample-metadata/fetch")
+def api_sample_metadata_fetch(name: str, source: str = Query("sra")):
+    """Start a job that fills the project's metadata sheet from a source."""
+    project_dir = _writable_project_dir(name)
+    if not re.fullmatch(r"[a-z0-9_]+", source or ""):
+        raise HTTPException(400, "Unknown metadata source.")
+    command = [sys.executable, "-u", str(_BIN_DIR / "sample_metadata.py"),
+               "--project", str(project_dir), "fetch", "--source", source]
+    env = {"PYTHONPATH": str(_BIN_DIR), "PATH": os.environ.get("PATH", ""), "PYTHONUNBUFFERED": "1"}
+    for key in ("NCBI_EMAIL", "NCBI_API_KEY"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    job_id = job_manager.start_job(name=f"{name} — sample metadata ({source})", command=command,
+                                   cwd=project_dir, env=env)
+    return JSONResponse({"job_id": job_id})
+
+
+@app.get("/api/projects/{name}/cohort-report")
+def api_cohort_report_status(name: str):
+    """What the last cohort report build left: its files and its checks."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    out = project_dir / _COHORT_DIRNAME
+    files = [{"name": fname, "label": label, "path": str(out / fname),
+              "openable": _can_open_inline(fname)}
+             for fname, label in _COHORT_FILE_LABELS if (out / fname).is_file()]
+    checks: Dict[str, Any] = {}
+    try:
+        checks = json.loads((out / "cohort_checks.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    # The fields a report could be coloured or charted by, and the saved
+    # choices. Asked of the report script itself, so the GUI offers exactly
+    # what a build would accept.
+    offered: Dict[str, Any] = {"fields": [], "settings": {}}
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(_BIN_DIR / "cohort_report.py"), "--project", str(project_dir), "--list-fields"],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONPATH": str(_BIN_DIR)})
+        if proc.returncode == 0:
+            offered = json.loads(proc.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        pass
+    # Sending the tree to iTOL: whether there is a tree to send, whether this
+    # user has a key (never the key itself), and where the last one went.
+    last_upload: Dict[str, Any] = {}
+    try:
+        last_upload = json.loads((out / "itol_upload.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    itol = {"available": (out / "itol_batch.zip").is_file(), "configured": bool(itol_api_key()),
+            "key_file": str(ITOL_KEY_PATH), "project": str(load_config().get("itol_project", "") or ""),
+            "last": last_upload}
+    return JSONResponse({"project": name, "exists": (out / "cohort_report.html").is_file(),
+                         "files": files, "checks": checks, "itol": itol,
+                         "fields": offered.get("fields", []), "settings": offered.get("settings", {})})
+
+
+class CohortReportChoices(BaseModel):
+    """What the report should show. A field is `mlst`, `organism`, `serovar`,
+    a metadata column, or COLUMN|year. Left out means "as chosen before"."""
+    color_by: Optional[str] = None
+    group_by: Optional[List[str]] = None
+    label_column: Optional[str] = None
+    title: Optional[str] = None
+
+
+def _field_arg(value: str) -> str:
+    value = (value or "").strip()
+    if len(value) > 200 or any(ch in value for ch in "\n\r\0"):
+        raise HTTPException(400, "That field name cannot be used.")
+    return value
+
+
+@app.post("/api/projects/{name}/cohort-report")
+def api_cohort_report_build(name: str, choices: Optional[CohortReportChoices] = None):
+    """Start a job that rebuilds the project's cohort report with these choices."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    if not (project_dir / _TOOL_SUBDIR).is_dir():
+        raise HTTPException(400, "This project has no finished samples yet. Run at least one first.")
+    for existing in job_manager.list_jobs():
+        if existing.get("status") == "running" and existing.get("name", "").startswith(f"{name} — cohort report"):
+            raise HTTPException(409, "A cohort report is already being built for this project.")
+    command = [sys.executable, "-u", str(_BIN_DIR / "cohort_report.py"), "--project", str(project_dir)]
+    if choices is not None:
+        # Passed as separate arguments, never through a shell.
+        if choices.color_by is not None:
+            command += [f"--color-by={_field_arg(choices.color_by)}"]
+        if choices.group_by is not None:
+            command += ["--group-by", *[_field_arg(g) for g in choices.group_by if g.strip()]]
+        if choices.label_column is not None:
+            command += [f"--label-column={_field_arg(choices.label_column)}"]
+        if choices.title is not None:
+            command += [f"--title={_field_arg(choices.title)}"]
+    env = {"PYTHONPATH": str(_BIN_DIR), "PATH": os.environ.get("PATH", ""), "PYTHONUNBUFFERED": "1"}
+    job_id = job_manager.start_job(name=f"{name} — cohort report", command=command,
+                                   cwd=project_dir, env=env)
+    return JSONResponse({"job_id": job_id})
+
+
+class ItolUpload(BaseModel):
+    """Where in the user's iTOL account the cohort tree should go."""
+    itol_project: str
+    tree_name: Optional[str] = None
+    include_popup: bool = True
+
+
+@app.post("/api/projects/{name}/cohort-report/itol-upload")
+def api_cohort_itol_upload(name: str, payload: ItolUpload):
+    """Send the cohort tree and its annotations to the user's iTOL account.
+
+    This is the one place the cohort report sends anything outside the lab, and
+    it runs only on this request. The API key goes to bin/itol_upload.py through
+    its environment, never on the command line and never back to the browser."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    if not (project_dir / _COHORT_DIRNAME / "itol_batch.zip").is_file():
+        raise HTTPException(400, "This project has no tree to send. Rebuild the cohort report "
+                                 "after a vSNP Step 2 run.")
+    key = itol_api_key()
+    if not key:
+        raise HTTPException(400, f"No iTOL API key is set. Save yours in {ITOL_KEY_PATH} on this "
+                                 "server, readable only by you.")
+    itol_project = _field_arg(payload.itol_project)
+    if not itol_project:
+        raise HTTPException(400, "Name the iTOL project the tree should go into.")
+    command = [sys.executable, str(_BIN_DIR / "itol_upload.py"), "--project", str(project_dir),
+               f"--itol-project={itol_project}", f"--tree-name={_field_arg(payload.tree_name or name)}"]
+    if not payload.include_popup:
+        command.append("--no-popup")
+    env = {"PYTHONPATH": str(_BIN_DIR), "PATH": os.environ.get("PATH", ""), "ITOL_API_KEY": key}
+    for passthrough in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR"):
+        if os.environ.get(passthrough):
+            env[passthrough] = os.environ[passthrough]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=180, env=env)
+        outcome = json.loads(proc.stdout.strip().splitlines()[-1])
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "iTOL did not answer in time. Check the iTOL project before sending again.")
+    except (OSError, ValueError, IndexError):
+        raise HTTPException(500, "The upload could not be run on this server.")
+    if not outcome.get("ok"):
+        raise HTTPException(502, outcome.get("message") or "iTOL did not accept the upload.")
+    cfg = load_config()
+    if cfg.get("itol_project") != itol_project:
+        cfg["itol_project"] = itol_project
+        save_config(cfg)
+    return JSONResponse({"ok": True, "tree_id": outcome.get("tree_id"), "url": outcome.get("url"),
+                         "warnings": outcome.get("warnings") or [], "files": outcome.get("files") or []})
 
 
 # ---------------------------------------------------------------------------
@@ -1391,6 +1703,8 @@ class RunPayload(BaseModel):
     use_plus: bool = True
     run_kraken: bool = True
     run_mlst: bool = True
+    run_typing: bool = True          # Salmonella serovar + replicon/virulence screens
+    run_checkm2: bool = True         # completeness and contamination estimate
     threads: Optional[int] = None
     ident_min: Optional[float] = None
     coverage_min: Optional[float] = None
@@ -1477,6 +1791,18 @@ def api_run(payload: RunPayload):
         command.append("--no-kraken")
     if not payload.run_mlst:
         command.append("--no-mlst")
+    if not payload.run_typing:
+        command.extend(["--no-serovar", "--no-gene-screens"])
+    if not payload.run_checkm2:
+        command.append("--no-checkm2")
+    # An empty saved value means "not set", so fall through to the default
+    # (for typing_root, the pipeline's own lookup).
+    typing_root = str(cfg.get("typing_root") or "").strip()
+    if typing_root:
+        command.extend(["--typing-root", typing_root])
+    checkm2_db = str(cfg.get("checkm2_db") or DEFAULTS.get("checkm2_db") or "").strip()
+    if checkm2_db:
+        command.extend(["--checkm2-db", checkm2_db])
     if kraken_db:
         command.extend(["--kraken-db", kraken_db])
     if amrfinder_db:
@@ -1662,6 +1988,18 @@ def _result_category(rel: str) -> Optional[str]:
         return "run_manifest"
     if name in ("mlst_result.json", "mlst.tsv"):
         return "mlst"
+    # Typing outputs (bin/typing_steps.py). One category per file so each
+    # gets its own label in the results list.
+    typing = {
+        "typing.json": "typing_summary",
+        "sistr.json": "typing_sistr",
+        "seqsero2.tsv": "typing_seqsero2",
+        "abricate_plasmidfinder.tsv": "typing_replicons",
+        "abricate_vfdb.tsv": "typing_virulence",
+        "checkm2.tsv": "typing_checkm2",
+    }
+    if len(parts) == 1 and name in typing:
+        return typing[name]
     if name == "assembly.fasta" or name.endswith("_assembly.fasta"):
         return "assembly_fasta"
     if name.endswith("_krona.html") or name == "krona.html":
@@ -1683,6 +2021,12 @@ _CATEGORY_ORDER = {
     "qc": 5,
     "fastq_qc": 6,
     "mlst": 7,
+    "typing_summary": 7,
+    "typing_sistr": 7,
+    "typing_seqsero2": 7,
+    "typing_replicons": 7,
+    "typing_virulence": 7,
+    "typing_checkm2": 7,
     "assembly_fasta": 8,
     "krona": 9,
     "kraken_report": 10,
@@ -1702,6 +2046,12 @@ def _result_label(rel: str, category: Optional[str]) -> str:
         "qc": "Assembly QC (JSON)",
         "fastq_qc": "Input read QC (JSON)",
         "mlst": "MLST result",
+        "typing_summary": "Typing summary (JSON)",
+        "typing_sistr": "Serovar by SISTR (JSON)",
+        "typing_seqsero2": "Serovar by SeqSero2 (TSV)",
+        "typing_replicons": "Plasmid replicons, abricate PlasmidFinder (TSV)",
+        "typing_virulence": "Virulence genes, abricate VFDB (TSV)",
+        "typing_checkm2": "CheckM2 completeness (TSV)",
         "assembly_fasta": "Assembly FASTA",
         "krona": "Krona taxonomy report",
         "kraken_report": "Kraken2 report",

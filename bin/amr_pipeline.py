@@ -14,7 +14,11 @@ Pipeline (per sample):
      -> scheme/ST -> token, compared with Kraken's call.
   5. AMRFinderPlus — run_amrfinder.py on the assembly with the resolved/forced
      --organism, --plus, --mutation_all, --print_node, etc.
-  6. Provenance — run_manifest.json (written by run_amrfinder) + the
+  6. Typing (optional) — typing_steps.py on the same assembly: CheckM2
+     completeness for any organism; for Salmonella, serovar by SISTR and
+     SeqSero2 plus plasmid replicons and virulence genes by abricate
+     -> typing.json. A tool that is not installed is skipped.
+  7. Provenance — run_manifest.json (written by run_amrfinder) + the
      organism_detection.json and qc.json this orchestrator writes.
 
 Output dir is <project>/amr/<sample>/ (passed via --outdir). Every artifact
@@ -23,6 +27,8 @@ lands there with a stable name so the backend's result endpoints find it.
 Usage:
   amr_pipeline.py --sample S --outdir DIR (-r1 R1 [-r2 R2] | --assembly A.fasta)
       [--force-organism TOKEN] [--plus] [--no-kraken] [--no-mlst]
+      [--no-serovar] [--no-gene-screens] [--no-checkm2]
+      [--typing-root DIR] [--checkm2-db DB]
       [--kraken-db DB] [--amrfinder-db DB] [--threads N]
       [--ident-min -1] [--coverage-min 0.5]
 """
@@ -92,6 +98,7 @@ _CONFIG_DIR = _REPO_ROOT / "config"
 
 import detect_organism  # local import (PYTHONPATH includes bin/)
 import run_amrfinder
+import typing_steps
 
 def _sibling_tool_dir(name: str) -> Path:
     """Where a sibling suite tool is installed, on ANY platform.
@@ -546,6 +553,16 @@ def main(argv=None) -> int:
     ap.add_argument("--plus", action="store_true", default=False)
     ap.add_argument("--no-kraken", action="store_true", default=False)
     ap.add_argument("--no-mlst", action="store_true", default=False)
+    ap.add_argument("--no-serovar", action="store_true", default=False,
+                    help="skip Salmonella serovar typing (SISTR, SeqSero2)")
+    ap.add_argument("--no-gene-screens", action="store_true", default=False,
+                    help="skip the abricate plasmid replicon and virulence screens")
+    ap.add_argument("--no-checkm2", action="store_true", default=False,
+                    help="skip the CheckM2 completeness estimate")
+    ap.add_argument("--typing-root", default=typing_steps.default_typing_root(),
+                    help="folder holding the typing tool envs")
+    ap.add_argument("--checkm2-db", default=os.environ.get("CHECKM2DB", ""),
+                    help="CheckM2 DIAMOND database file, or a folder holding it")
     ap.add_argument("--kraken-db", default=os.environ.get("KRAKEN_DB", ""))
     ap.add_argument("--amrfinder-db", default=None)
     ap.add_argument("--threads", type=int, default=_default_threads())
@@ -660,8 +677,26 @@ def main(argv=None) -> int:
     if manifest.get("stxtyper_active"):
         log("StxTyper ran (Escherichia + --plus): Stx subtypes are in the AMRFinderPlus output.")
 
-    # ---- Step 6: Report (stats workbook + PDF) ----
-    step("Step 6: Building report (stats.xlsx + report.pdf)")
+    # ---- Step 6: Typing (reuses the assembly; soft-skips what is not installed) ----
+    step("Step 6: Typing (completeness, serovar, plasmid replicons, virulence)")
+    try:
+        typing_steps.run_all(
+            assembly=assembly,
+            outdir=outdir,
+            detection=detection,
+            typing_root=args.typing_root,
+            checkm2_db=args.checkm2_db,
+            threads=args.threads,
+            log=log,
+            run_serovar=not args.no_serovar,
+            run_gene_screens=not args.no_gene_screens,
+            run_completeness=not args.no_checkm2,
+        )
+    except Exception as exc:  # noqa: BLE001: typing never fails the AMR run
+        log(f"  WARNING: typing steps failed: {exc}")
+
+    # ---- Step 7: Report (stats workbook + PDF) ----
+    step("Step 7: Building report (stats.xlsx + report.pdf)")
     try:
         import reporting  # bin/ is on PYTHONPATH
         reporting.build(outdir, args.sample, log=log)

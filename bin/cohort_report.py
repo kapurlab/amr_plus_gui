@@ -245,7 +245,8 @@ def informative_columns(columns: List[str], isolates: List["Isolate"]) -> Tuple[
     most of it says the same thing on every row. So a column is shown only when
     it tells isolates apart:
       constant   every isolate that has a value has the same one -> {column: value},
-                 stated once under the table;
+                 stated once under the table, with the count when some
+                 isolates have no value;
       duplicate  the same values, row for row, as the isolate name, the sample
                  name or an earlier column -> {column: the one it repeats};
       empty      no values at all -> dropped.
@@ -261,7 +262,9 @@ def informative_columns(columns: List[str], isolates: List["Isolate"]) -> Tuple[
         if not distinct:
             continue
         if len(distinct) == 1 and len(isolates) > 1:
-            constant[col] = next(iter(distinct))
+            filled = sum(1 for v in values if v)
+            constant[col] = next(iter(distinct)) + (
+                "" if filled == len(isolates) else f" ({filled} of {len(isolates)}; the rest have no value)")
         elif values in seen:
             duplicate[col] = seen[values]
         else:
@@ -750,7 +753,7 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
                      "tree order where the isolate is in the tree. Only columns that tell isolates "
                      "apart are printed; cohort_table.tsv has every column.</p>")
         if constant:
-            parts.append('<p class="small">The same for every isolate: '
+            parts.append('<p class="small">One value across the cohort: '
                          + _e("; ".join(f"{k} = {v}" for k, v in constant.items())) + ".</p>")
         if duplicate:
             parts.append('<p class="small">Columns that repeat another, not printed: '

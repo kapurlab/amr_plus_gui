@@ -228,14 +228,16 @@ def test_a_serovar_disagreement_becomes_a_note_on_the_isolate(tmp_path):
 
 def test_only_columns_that_tell_isolates_apart_are_printed():
     isolates = [cohort_report.Isolate(sample=s, label=l, meta=m) for s, l, m in [
-        ("R1", "ISO-1", {"run": "R1", "strain": "ISO-1", "organism": "S. enterica", "state": "PR", "region": "PR", "host": ""}),
-        ("R2", "ISO-2", {"run": "R2", "strain": "ISO-2", "organism": "S. enterica", "state": "SP", "region": "SP", "host": ""}),
-        ("R3", "ISO-3", {"run": "R3", "strain": "ISO-3", "organism": "S. enterica", "state": "SP", "region": "SP", "host": ""}),
+        ("R1", "ISO-1", {"run": "R1", "strain": "ISO-1", "organism": "S. enterica", "state": "PR", "region": "PR", "host": "", "breed": "Nelore"}),
+        ("R2", "ISO-2", {"run": "R2", "strain": "ISO-2", "organism": "S. enterica", "state": "SP", "region": "SP", "host": "", "breed": ""}),
+        ("R3", "ISO-3", {"run": "R3", "strain": "ISO-3", "organism": "S. enterica", "state": "SP", "region": "SP", "host": "", "breed": "Nelore"}),
     ]]
     shown, constant, duplicate = cohort_report.informative_columns(
-        ["run", "strain", "organism", "state", "region", "host"], isolates)
+        ["run", "strain", "organism", "state", "region", "host", "breed"], isolates)
     assert shown == ["state"]
-    assert constant == {"organism": "S. enterica"}
+    # A column with one value says how many isolates carry it when some do not.
+    assert constant == {"organism": "S. enterica",
+                        "breed": "Nelore (2 of 3; the rest have no value)"}
     assert duplicate == {"run": "Sample", "strain": "Isolate", "region": "state"}
 
 

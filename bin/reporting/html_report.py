@@ -103,6 +103,75 @@ def _amr_table(rows: List[Dict[str, str]]) -> str:
             f'<tbody>{"".join(body)}</tbody></table>')
 
 
+def _hits_table(hits: List[Dict[str, Any]]) -> str:
+    head = ("Gene", "% Ident", "% Cov", "Contig", "Accession", "Product")
+    thead = "".join(f"<th>{_e(h)}</th>" for h in head)
+    body = []
+    for h in hits:
+        cells = (h.get("gene"), _fmt_pct(h.get("identity")), _fmt_pct(h.get("coverage")),
+                 h.get("contig"), h.get("accession"), h.get("product"))
+        body.append("<tr>" + "".join(f"<td>{_e(c)}</td>" for c in cells) + "</tr>")
+    return (f'<table class="grid"><thead><tr>{thead}</tr></thead>'
+            f'<tbody>{"".join(body)}</tbody></table>')
+
+
+def _typing_sections(typing: Dict[str, Any]) -> List[str]:
+    """Serovar, plasmid replicon and virulence sections for the steps that ran."""
+    from . import _AGREEMENT_TEXT, gene_names
+
+    parts: List[str] = []
+    serovar = typing.get("serovar") or {}
+    if serovar:
+        sistr = serovar.get("sistr") or {}
+        seqsero2 = serovar.get("seqsero2") or {}
+        agreement = serovar.get("agreement")
+        parts.append("<h2>Serovar and lineage</h2>")
+        if agreement == "disagree":
+            parts.append('<div class="banner danger">SISTR and SeqSero2 give different serovars. '
+                         'Review both calls before reporting a serovar.</div>')
+        parts.append(_kv_rows([
+            ("Serovar (SISTR)", sistr.get("serovar")),
+            ("Serovar (SeqSero2)", seqsero2.get("serovar")),
+            ("Agreement", _AGREEMENT_TEXT.get(agreement, agreement)),
+            ("Antigenic profile (SeqSero2)", seqsero2.get("antigenic_profile")),
+            ("Antigenic formula (SISTR)", sistr.get("antigenic_formula")),
+            ("Serogroup (SISTR)", sistr.get("serogroup")),
+            ("cgMLST ST (SISTR)", sistr.get("cgmlst_st")),
+            ("cgMLST alleles matching the nearest genome (SISTR)",
+             f'{sistr.get("cgmlst_matching_alleles")} of {sistr.get("cgmlst_found_loci")} loci found'
+             if sistr.get("cgmlst_matching_alleles") is not None and sistr.get("cgmlst_found_loci") is not None
+             else sistr.get("cgmlst_matching_alleles")),
+            ("SISTR QC", sistr.get("qc_status")),
+            ("SeqSero2 note", seqsero2.get("note")),
+        ]))
+        parts.append('<p class="small">SISTR uses cgMLST together with the antigen genes, so its '
+                     'serovar call and its cgMLST result are not independent of each other. '
+                     'SeqSero2 is the independent second method.</p>')
+    if "plasmid_replicons" in typing:
+        hits = typing.get("plasmid_replicons") or []
+        parts.append("<h2>Plasmid replicons</h2>")
+        if hits:
+            parts.append(f'<div class="scroll">{_hits_table(hits)}</div>')
+        else:
+            parts.append('<p class="muted">No plasmid replicons detected.</p>')
+    if "virulence_genes" in typing:
+        hits = typing.get("virulence_genes") or []
+        names = gene_names(hits)
+        parts.append("<h2>Virulence genes (VFDB)</h2>")
+        if names:
+            chips = "".join(f"<span>{_e(n)}</span>" for n in names)
+            parts.append(f'<p>{len(names)} gene(s) detected. Identity, coverage and position for '
+                         f'each hit are in <code>abricate_vfdb.tsv</code>.</p>'
+                         f'<div class="chips">{chips}</div>')
+        else:
+            parts.append('<p class="muted">No virulence genes detected.</p>')
+    if parts:
+        parts.append('<p class="small">Replicon and virulence results are sequence matches to '
+                     'reference databases. A match shows the gene is present in the assembly; it '
+                     'does not show that it is expressed.</p>')
+    return parts
+
+
 _CSS = """
 * { box-sizing: border-box; }
 body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -140,6 +209,8 @@ def write_html(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
     rows = ctx.get("amr_rows") or []
     summ = ctx.get("amr_summary") or {}
     mlst = ctx.get("mlst") or load_mlst(outdir)
+    typing = ctx.get("typing") or {}
+    checkm2 = typing.get("checkm2") or {}
     m = (qc or {}).get("metrics", {}) or {}
 
     verdict = (qc.get("verdict") or "—").upper()
@@ -155,8 +226,12 @@ def write_html(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
     org = det.get("dominant_species") or det.get("organism_token") or "organism unknown"
     st = mlst.get("st") or det.get("mlst_st") or "—"
     scheme = mlst.get("scheme") or det.get("mlst_scheme") or "—"
+    # The serovar joins the headline only when both tools gave the same call.
+    serovar_call = (typing.get("serovar") or {})
+    serovar_txt = (f' · serovar {_e(serovar_call.get("serovar"))}'
+                   if serovar_call.get("agreement") == "agree" and serovar_call.get("serovar") else "")
     parts.append(
-        f'<div class="banner">Organism: {_e(org)} · MLST {_e(scheme)} ST {_e(st)} · '
+        f'<div class="banner">Organism: {_e(org)}{serovar_txt} · MLST {_e(scheme)} ST {_e(st)} · '
         f'{_fmt_int(summ.get("total"))} element(s) · '
         f'assembly QC <span class="pill" style="background:{vcolor}">{_e(verdict)}</span></div>'
     )
@@ -213,7 +288,13 @@ def write_html(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         ("Largest contig (bp)", _fmt_int(m.get("max_len"))),
         ("Expected genome size (bp)", _fmt_int(qc.get("expected_genome_size")) if qc.get("expected_genome_size") else "—"),
         ("Assembly QC verdict", verdict),
-    ]))
+    ] + ([
+        ("CheckM2 completeness (%)", _fmt_pct(checkm2.get("completeness"))),
+        ("CheckM2 contamination (%)", _fmt_pct(checkm2.get("contamination"))),
+    ] if checkm2 else [])))
+
+    # Serovar, plasmid replicons, virulence (only the steps that ran)
+    parts.extend(_typing_sections(typing))
 
     # AMR summary
     parts.append("<h2>Resistance summary</h2>")
@@ -244,6 +325,7 @@ def write_html(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
         ("kraken2 version", vers_extra.get("kraken2")),
         ("mlst version", vers_extra.get("mlst")),
         ("Assembler", assembler),
+    ] + _typing_method_rows(typing) + [
         ("Standards referenced",
          ", ".join(r.get("standard") for r in (man.get("iso_references") or []) if r.get("standard")) or "—"),
     ]))
@@ -256,6 +338,25 @@ def write_html(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
            f'<title>AMR report — {_e(sample)}</title><style>{_CSS}</style></head>'
            f'<body>{"".join(parts)}</body></html>')
     Path(path).write_text(doc, encoding="utf-8")
+
+
+def _typing_method_rows(typing: Dict[str, Any]) -> List[Tuple[str, Any]]:
+    """Tool and database versions for the typing steps that ran."""
+    versions = (typing or {}).get("versions") or {}
+    thresholds = (typing or {}).get("thresholds") or {}
+    rows: List[Tuple[str, Any]] = []
+    for label, key in (("SISTR version", "sistr"), ("SeqSero2 version", "seqsero2"),
+                       ("CheckM2 version", "checkm2"), ("abricate version", "abricate")):
+        if versions.get(key):
+            rows.append((label, versions[key]))
+    databases = versions.get("abricate_databases") or {}
+    if databases:
+        rows.append(("abricate databases",
+                     ", ".join(f"{name} ({date})" for name, date in sorted(databases.items()))))
+    for database, cut in sorted(thresholds.items()):
+        rows.append((f"abricate {database} thresholds",
+                     f'identity ≥ {cut.get("min_identity")}%, coverage ≥ {cut.get("min_coverage")}%'))
+    return rows
 
 
 def html_to_pdf(html_path: Path, pdf_path: Path) -> bool:

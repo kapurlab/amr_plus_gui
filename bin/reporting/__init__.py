@@ -142,6 +142,58 @@ def _fastq_label(stats: Dict[str, Any], tag: str, items: List[Tuple[str, str]]) 
 
 
 # ---------------------------------------------------------------------------
+# Typing results (typing.json, written by bin/typing_steps.py)
+# ---------------------------------------------------------------------------
+_AGREEMENT_TEXT = {
+    "agree": "SISTR and SeqSero2 agree",
+    "consistent": "calls overlap; at least one tool lists alternatives",
+    "disagree": "SISTR and SeqSero2 DISAGREE",
+    "single": "one tool only",
+    "none": "no serovar call",
+}
+
+
+def gene_names(hits: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Distinct gene names from abricate hits, in first-seen order."""
+    seen: List[str] = []
+    for hit in hits or []:
+        name = str(hit.get("gene") or "").strip()
+        if name and name not in seen:
+            seen.append(name)
+    return seen
+
+
+def typing_stats_items(typing: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Labeled rows for whatever typing steps ran. Empty when none did, so a
+    run without the typing tools reads exactly as it did before."""
+    items: List[Tuple[str, str]] = []
+    if not typing:
+        return items
+    checkm2 = typing.get("checkm2") or {}
+    if checkm2:
+        items.append(("CheckM2 completeness (%)", _fmt_pct(checkm2.get("completeness"))))
+        items.append(("CheckM2 contamination (%)", _fmt_pct(checkm2.get("contamination"))))
+    serovar = typing.get("serovar") or {}
+    if serovar:
+        sistr = serovar.get("sistr") or {}
+        seqsero2 = serovar.get("seqsero2") or {}
+        items.append(("Serovar (SISTR)", sistr.get("serovar") or "—"))
+        items.append(("Serovar (SeqSero2)", seqsero2.get("serovar") or "—"))
+        items.append(("Serovar agreement",
+                      _AGREEMENT_TEXT.get(serovar.get("agreement"), serovar.get("agreement") or "—")))
+        items.append(("Antigenic profile (SeqSero2)", seqsero2.get("antigenic_profile") or "—"))
+        items.append(("cgMLST ST (SISTR)", str(sistr.get("cgmlst_st") or "—")))
+        items.append(("cgMLST matching alleles (SISTR)", str(sistr.get("cgmlst_matching_alleles") or "—")))
+        items.append(("SISTR QC", sistr.get("qc_status") or "—"))
+    if "plasmid_replicons" in typing:
+        names = gene_names(typing.get("plasmid_replicons"))
+        items.append(("Plasmid replicons", ", ".join(names) if names else "none detected"))
+    if "virulence_genes" in typing:
+        items.append(("Virulence genes (VFDB)", _fmt_int(len(gene_names(typing.get("virulence_genes"))))))
+    return items
+
+
+# ---------------------------------------------------------------------------
 # Build the ordered, labeled stats list (one metric per row)
 # ---------------------------------------------------------------------------
 def build_stats_items(
@@ -152,6 +204,7 @@ def build_stats_items(
     detection: Dict[str, Any],
     manifest: Dict[str, Any],
     amr_summary: Dict[str, Any],
+    typing: Optional[Dict[str, Any]] = None,
 ) -> List[Tuple[str, str]]:
     items: List[Tuple[str, str]] = []
     opts = manifest.get("options", {}) or {}
@@ -195,6 +248,9 @@ def build_stats_items(
         items.append(("Expected genome size (bp)", _fmt_int(qc.get("expected_genome_size"))))
     items.append(("Assembly QC verdict", (qc.get("verdict") or "—").upper()))
 
+    # — Typing (only the steps that ran) —
+    items.extend(typing_stats_items(typing or {}))
+
     # — AMR results —
     items.append(("AMRFinderPlus DB version", vers.get("amrfinder_db") or detection.get("db_version") or "—"))
     items.append(("--plus used", "yes" if opts.get("plus") else "no"))
@@ -234,9 +290,11 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
     manifest = _load_json(outdir / "run_manifest.json")
     amr_rows = load_amrfinder_tsv(outdir / "amrfinder.tsv")
     amr_summary = summarize_amr(amr_rows)
+    typing = _load_json(outdir / "typing.json")
 
     date_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    items = build_stats_items(sample, date_stamp, fastq_qc, qc, detection, manifest, amr_summary)
+    items = build_stats_items(sample, date_stamp, fastq_qc, qc, detection, manifest, amr_summary,
+                              typing=typing)
 
     # --- stats workbook (single labeled column) ---
     try:
@@ -257,6 +315,7 @@ def build(outdir: Path, sample: str, log=print) -> Dict[str, Optional[str]]:
         "manifest": manifest,
         "amr_rows": amr_rows,
         "amr_summary": amr_summary,
+        "typing": typing,
         "stats_items": items,
     }
 

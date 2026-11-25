@@ -256,6 +256,17 @@ def write_pdf(ctx: Dict[str, Any], path: Path, outdir: Path) -> None:
     for nt in (qc.get("notes") or []):
         story.append(Paragraph(f"• {nt}", ss["Small"]))
 
+    # --- Typing (completeness, serovar, replicons, virulence; steps that ran) ---
+    from . import typing_stats_items
+    typing_rows = typing_stats_items(ctx.get("typing") or {})
+    if typing_rows:
+        story.append(Paragraph("Typing", ss["H2"]))
+        story.append(_kv_table(typing_rows, ss))
+        story.append(Paragraph(
+            "Serovar is called by SISTR and by SeqSero2. SISTR uses cgMLST with the antigen "
+            "genes, so SeqSero2 is the independent second method. Replicon and virulence results "
+            "are sequence matches and do not show expression.", ss["Small"]))
+
     # --- AMR findings ---
     story.append(Paragraph("Antimicrobial resistance findings", ss["H2"]))
     fig1 = assets / "amr_by_class.png"

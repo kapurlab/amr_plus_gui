@@ -1,0 +1,87 @@
+[
+  {
+    "antigenic_formula": "1,9,12[Vi]:g,p:-",
+    "cgmlst_ST": 2789633150,
+    "cgmlst_distance": 0.054545454545454564,
+    "cgmlst_found_loci": 330,
+    "cgmlst_genome_match": "2018-CAL-0016",
+    "cgmlst_matching_alleles": 312,
+    "cgmlst_subspecies": "enterica",
+    "fasta_filepath": "assembly.fasta",
+    "genome": "assembly",
+    "h1": "g,p",
+    "h1_flic_prediction": {
+      "h1": "g,p",
+      "is_missing": false,
+      "is_perfect_match": false,
+      "is_trunc": false,
+      "top_result": {
+        "qseqid": "MZ0692|g,p",
+        "stitle": "contig00003 len=491858 cov=14.3 corr=0 origname=NODE_3_length_491858_cov_14.265936_pilon sw=shovill-spades/1.4.2 date=20261124",
+        "pident": 99.934,
+        "length": 1518,
+        "mismatch": 1,
+        "gapopen": 0,
+        "qstart": 1,
+        "qend": 1518,
+        "sstart": 413910,
+        "send": 415427,
+        "evalue": 0.0,
+        "bitscore": 2798,
+        "qlen": 1518,
+        "slen": 491858,
+        "coverage": 1.0,
+        "is_trunc": false
+      }
+    },
+    "h2": "-",
+    "h2_fljb_prediction": {
+      "h2": "-",
+      "is_missing": true,
+      "is_perfect_match": false,
+      "is_trunc": false,
+      "top_result": null
+    },
+    "o_antigen": "1,9,12[Vi]",
+    "qc_messages": "INFO: Number of cgMLST330 loci found (n=330)",
+    "qc_status": "PASS",
+    "serogroup": "D1",
+    "serogroup_prediction": {
+      "serogroup": "D1",
+      "wzx_prediction": {
+        "is_missing": false,
+        "is_perfect_match": false,
+        "is_trunc": false,
+        "serogroup": "D1",
+        "top_result": {
+          "qseqid": "186|584|1,9,12[Vi]|D1",
+          "stitle": "contig00001 len=1068540 cov=14.1 corr=0 origname=NODE_1_length_1068540_cov_14.133241_pilon sw=shovill-spades/1.4.2 date=20261124",
+          "pident": 99.923,
+          "length": 1299,
+          "mismatch": 1,
+          "gapopen": 0,
+          "qstart": 1,
+          "qend": 1299,
+          "sstart": 168019,
+          "send": 169317,
+          "evalue": 0.0,
+          "bitscore": 2394,
+          "qlen": 1299,
+          "slen": 1068540,
+          "coverage": 1.0,
+          "is_trunc": false
+        }
+      },
+      "wzy_prediction": {
+        "is_missing": true,
+        "is_perfect_match": false,
+        "is_trunc": false,
+        "serogroup": null,
+        "top_result": null
+      }
+    },
+    "serovar": "Dublin",
+    "serovar_antigen": "Kiel|Dublin",
+    "serovar_cgmlst": "Dublin"
+  }
+]

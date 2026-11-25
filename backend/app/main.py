@@ -935,6 +935,7 @@ def _row_metrics(run_dir: Path) -> Dict[str, Any]:
     table renders an em dash rather than inventing a zero."""
     m: Dict[str, Any] = {"organism": None, "genes": None, "point": None,
                          "plus": None, "mlst": None}
+    m.update(_typing_metrics(run_dir))
     try:
         org = json.loads((run_dir / "organism_detection.json").read_text(encoding="utf-8"))
         m["organism"] = org.get("organism_token") or org.get("dominant_species") or None
@@ -953,6 +954,53 @@ def _row_metrics(run_dir: Path) -> Dict[str, Any]:
             m["plus"] = s.get("plus_count")
         except Exception:
             pass
+    return m
+
+
+_TYPING_METRIC_KEYS = ("serovar_sistr", "serovar_seqsero2", "serovar_agreement",
+                       "cgmlst_st", "replicons", "virulence_genes",
+                       "completeness", "contamination")
+
+
+def _typing_metrics(run_dir: Path) -> Dict[str, Any]:
+    """Per-sample typing columns from typing.json (bin/typing_steps.py).
+
+    Every key is present and None when its step did not run, so a table or an
+    export shows a blank and never a made-up value. An empty replicon list is
+    a real negative and is reported as "none"."""
+    m: Dict[str, Any] = {k: None for k in _TYPING_METRIC_KEYS}
+    try:
+        typing = json.loads((run_dir / "typing.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return m
+    if not isinstance(typing, dict):
+        return m
+
+    def names(key: str) -> Optional[List[str]]:
+        if key not in typing:
+            return None
+        seen: List[str] = []
+        for hit in typing.get(key) or []:
+            gene = str((hit or {}).get("gene") or "").strip()
+            if gene and gene not in seen:
+                seen.append(gene)
+        return seen
+
+    serovar = typing.get("serovar") or {}
+    sistr = serovar.get("sistr") or {}
+    m["serovar_sistr"] = sistr.get("serovar") or None
+    m["serovar_seqsero2"] = (serovar.get("seqsero2") or {}).get("serovar") or None
+    m["serovar_agreement"] = serovar.get("agreement") or None
+    m["cgmlst_st"] = sistr.get("cgmlst_st")
+    replicons = names("plasmid_replicons")
+    if replicons is not None:
+        m["replicons"] = ", ".join(sorted(replicons)) if replicons else "none"
+    virulence = names("virulence_genes")
+    if virulence is not None:
+        m["virulence_genes"] = len(virulence)
+    checkm2 = typing.get("checkm2") or {}
+    m["completeness"] = checkm2.get("completeness")
+    m["contamination"] = checkm2.get("contamination")
     return m
 
 
@@ -1033,7 +1081,12 @@ _EXPORT_COLUMNS = [
     ("sample", "Sample"), ("status", "Status"), ("run_date", "Run date"),
     ("qc", "QC"), ("qc_reasons", "QC notes"), ("organism", "Organism"),
     ("mlst", "MLST"), ("genes", "AMR genes"), ("point", "Point mutations"),
-    ("plus", "Plus elements"), ("run_dir", "Run directory"),
+    ("plus", "Plus elements"),
+    ("serovar_sistr", "Serovar (SISTR)"), ("serovar_seqsero2", "Serovar (SeqSero2)"),
+    ("serovar_agreement", "Serovar agreement"), ("cgmlst_st", "cgMLST ST"),
+    ("replicons", "Plasmid replicons"), ("virulence_genes", "Virulence genes"),
+    ("completeness", "CheckM2 completeness (%)"), ("contamination", "CheckM2 contamination (%)"),
+    ("run_dir", "Run directory"),
 ]
 
 
@@ -1048,6 +1101,7 @@ def _export_records(name, start, end, q):
             "qc_reasons": "; ".join((r.get("flags") or {}).get("reasons", [])),
             "organism": m.get("organism") or "", "mlst": m.get("mlst") or "",
             "genes": m.get("genes"), "point": m.get("point"), "plus": m.get("plus"),
+            **{k: m.get(k) for k in _TYPING_METRIC_KEYS},
             "run_dir": r.get("run_dir", ""),
         }
 
@@ -1391,6 +1445,8 @@ class RunPayload(BaseModel):
     use_plus: bool = True
     run_kraken: bool = True
     run_mlst: bool = True
+    run_typing: bool = True          # Salmonella serovar + replicon/virulence screens
+    run_checkm2: bool = True         # completeness and contamination estimate
     threads: Optional[int] = None
     ident_min: Optional[float] = None
     coverage_min: Optional[float] = None
@@ -1477,6 +1533,18 @@ def api_run(payload: RunPayload):
         command.append("--no-kraken")
     if not payload.run_mlst:
         command.append("--no-mlst")
+    if not payload.run_typing:
+        command.extend(["--no-serovar", "--no-gene-screens"])
+    if not payload.run_checkm2:
+        command.append("--no-checkm2")
+    # An empty saved value means "not set", so fall through to the default
+    # (for typing_root, the pipeline's own lookup).
+    typing_root = str(cfg.get("typing_root") or "").strip()
+    if typing_root:
+        command.extend(["--typing-root", typing_root])
+    checkm2_db = str(cfg.get("checkm2_db") or DEFAULTS.get("checkm2_db") or "").strip()
+    if checkm2_db:
+        command.extend(["--checkm2-db", checkm2_db])
     if kraken_db:
         command.extend(["--kraken-db", kraken_db])
     if amrfinder_db:
@@ -1662,6 +1730,18 @@ def _result_category(rel: str) -> Optional[str]:
         return "run_manifest"
     if name in ("mlst_result.json", "mlst.tsv"):
         return "mlst"
+    # Typing outputs (bin/typing_steps.py). One category per file so each
+    # gets its own label in the results list.
+    typing = {
+        "typing.json": "typing_summary",
+        "sistr.json": "typing_sistr",
+        "seqsero2.tsv": "typing_seqsero2",
+        "abricate_plasmidfinder.tsv": "typing_replicons",
+        "abricate_vfdb.tsv": "typing_virulence",
+        "checkm2.tsv": "typing_checkm2",
+    }
+    if len(parts) == 1 and name in typing:
+        return typing[name]
     if name == "assembly.fasta" or name.endswith("_assembly.fasta"):
         return "assembly_fasta"
     if name.endswith("_krona.html") or name == "krona.html":
@@ -1683,6 +1763,12 @@ _CATEGORY_ORDER = {
     "qc": 5,
     "fastq_qc": 6,
     "mlst": 7,
+    "typing_summary": 7,
+    "typing_sistr": 7,
+    "typing_seqsero2": 7,
+    "typing_replicons": 7,
+    "typing_virulence": 7,
+    "typing_checkm2": 7,
     "assembly_fasta": 8,
     "krona": 9,
     "kraken_report": 10,
@@ -1702,6 +1788,12 @@ def _result_label(rel: str, category: Optional[str]) -> str:
         "qc": "Assembly QC (JSON)",
         "fastq_qc": "Input read QC (JSON)",
         "mlst": "MLST result",
+        "typing_summary": "Typing summary (JSON)",
+        "typing_sistr": "Serovar by SISTR (JSON)",
+        "typing_seqsero2": "Serovar by SeqSero2 (TSV)",
+        "typing_replicons": "Plasmid replicons, abricate PlasmidFinder (TSV)",
+        "typing_virulence": "Virulence genes, abricate VFDB (TSV)",
+        "typing_checkm2": "CheckM2 completeness (TSV)",
         "assembly_fasta": "Assembly FASTA",
         "krona": "Krona taxonomy report",
         "kraken_report": "Kraken2 report",

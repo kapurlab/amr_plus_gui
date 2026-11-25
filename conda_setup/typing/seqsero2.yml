@@ -1,0 +1,8 @@
+# SeqSero2: Salmonella serotype from antigen gene k-mers (bin/typing_steps.py).
+# Installed by deploy/setup_typing.sh into <typing root>/seqsero2.
+name: typing_seqsero2
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - seqsero2=1.3.2

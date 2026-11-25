@@ -27,6 +27,9 @@ Authoritative build spec: `SPEC_BUILD.md`.
     amr_pipeline.py    orchestrator (kraken → assemble → QC → mlst → amrfinder)
     detect_organism.py conservative organism resolution + organism_detection.json
     run_amrfinder.py   AMRFinderPlus runner + run_manifest.json provenance
+    typing_steps.py    typing after AMRFinderPlus: CheckM2 for any organism;
+                       for Salmonella, serovar (SISTR, SeqSero2) and abricate
+                       PlasmidFinder / VFDB screens -> typing.json
   config/
     organism_map.yaml         species → --organism token (exact/complex/genus)
     amrfinder_organisms.txt   fallback valid-token list (live: `amrfinder -l`)
@@ -37,7 +40,10 @@ Authoritative build spec: `SPEC_BUILD.md`.
     vite.config.js base: "./" — DO NOT CHANGE
     dist/          built output served by uvicorn (rebuild after edits)
   conda_setup/environment.yml   env name amr_plus
+  conda_setup/typing/*.yml      one env per typing tool (they do not solve together)
   deploy/install.sh, INSTALL.md
+  deploy/setup_typing.sh        installs the typing envs and the CheckM2 database
+  tests/                        pytest tests for typing_steps and its report rows
   ood/apps/amr_plus_gui{,_dev}/ OOD app definitions (prod + dev branch-picker)
 ```
 
@@ -82,12 +88,23 @@ Passing the wrong `--organism` is worse than none. `detect_organism.py`:
 Every decision is in `organism_detection.json`; every amrfinder option +
 tool/DB versions + thresholds + ISO refs are in `run_manifest.json`.
 
+### 7. Typing steps are optional and never fail a run
+`bin/typing_steps.py` runs after AMRFinderPlus on the same assembly. Its tools
+live in their own conda envs under one "typing root" (`<tools root>/typing` by
+default, or `BDTOOLS_TYPING_ROOT`, or `typing_root` in config.json), installed
+by `deploy/setup_typing.sh`. A tool that is not installed is skipped with a
+note, so the GUI behaves as before on a machine without them. The serovar and
+abricate steps run only when the organism is Salmonella. A step that did not
+run adds no row to the report, so a missing tool never reads as a negative
+result.
+
 ## Development Workflow
 
 - **Backend change**: edit `backend/app/`, start a new OOD session (or in dev,
   `--reload` picks it up).
 - **Frontend change**: edit `frontend/src/`, `npm run build`, new OOD session.
-- **Pipeline change**: edit `bin/*.py`; verify with `python -m py_compile`.
+- **Pipeline change**: edit `bin/*.py`; verify with `python -m py_compile`
+  and `pytest tests/`.
 - **OOD template change**: edit `ood/apps/.../template/*`, new session.
 
 ## Key Paths
@@ -108,6 +125,10 @@ tool/DB versions + thresholds + ISO refs are in `run_manifest.json`.
 `<project>/amr/<sample>/`: `amrfinder.tsv`, `mutation_all.tsv`,
 `organism_detection.json`, `qc.json`, `assembly.fasta`, `mlst_result.json`,
 `kraken_report.txt`, `run_manifest.json`, `pipeline.log`.
+
+When the typing tools are installed, also: `typing.json` (the summary the
+report and the results export read), `checkm2.tsv`, and for Salmonella
+`sistr.json`, `seqsero2.tsv`, `abricate_plasmidfinder.tsv`, `abricate_vfdb.tsv`.
 
 ## AMRFinderPlus TSV columns (for parsing)
 

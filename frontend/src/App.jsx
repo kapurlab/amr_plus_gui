@@ -112,6 +112,8 @@ export default function App() {
   const [usePlus, setUsePlus] = useState(true);
   const [runKraken, setRunKraken] = useState(true);
   const [runMlst, setRunMlst] = useState(true);
+  const [runTyping, setRunTyping] = useState(true);
+  const [runCheckm2, setRunCheckm2] = useState(true);
   const [threads, setThreads] = useState("");
   const [krakenDb, setKrakenDb] = useState("");
   // Kraken2 databases already configured somewhere in the suite, so this tool
@@ -559,6 +561,8 @@ export default function App() {
           use_plus: usePlus,
           run_kraken: runKraken,
           run_mlst: runMlst,
+          run_typing: runTyping,
+          run_checkm2: runCheckm2,
           threads: threads ? parseInt(threads, 10) : null,
           kraken_db: krakenDb.trim() || null,
           amrfinder_db: amrfinderDb.trim() || null,
@@ -1352,6 +1356,17 @@ export default function App() {
                 <label className="checkbox-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
                   <input type="checkbox" checked={runMlst} onChange={(e) => setRunMlst(e.target.checked)} disabled={running} />
                   <span>Run MLST corroboration (if available)</span>
+                </label>
+                <label className="checkbox-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
+                  <input type="checkbox" checked={runTyping} onChange={(e) => setRunTyping(e.target.checked)} disabled={running} />
+                  <span>Salmonella typing: serovar, plasmid replicons, virulence genes (if available)</span>
+                </label>
+                <div className="note" style={{ marginTop: 4 }}>
+                  Runs only when the organism is <em>Salmonella</em>. Serovar is called by SISTR and by SeqSero2.
+                </div>
+                <label className="checkbox-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
+                  <input type="checkbox" checked={runCheckm2} onChange={(e) => setRunCheckm2(e.target.checked)} disabled={running} />
+                  <span>CheckM2 completeness and contamination (if available)</span>
                 </label>
               </div>
 

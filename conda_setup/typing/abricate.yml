@@ -1,0 +1,9 @@
+# abricate: screens an assembly against the PlasmidFinder and VFDB databases
+# it ships with (bin/typing_steps.py).
+# Installed by deploy/setup_typing.sh into <typing root>/abricate.
+name: typing_abricate
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - abricate=1.4.0

@@ -1,0 +1,2 @@
+Sample name	Output directory	Input files	O antigen prediction	H1 antigen prediction(fliC)	H2 antigen prediction(fljB)	Predicted identification	Predicted antigenic profile	Predicted serotype	Note
+SRR37707748	seqsero2_out	assembly.fasta	9	g,p	-	Salmonella enterica subspecies enterica (subspecies I)	9:g,p:-	Dublin	

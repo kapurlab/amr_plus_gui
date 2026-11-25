@@ -10,6 +10,10 @@ import { useEffect, useRef, useState } from "react";
 export default function CohortReport({ project, sampleCount = 0 }) {
   const [state, setState] = useState(null);
   const [meta, setMeta] = useState(null);
+  // What the report should show. Filled from the project's saved choices.
+  const [colorBy, setColorBy] = useState("mlst");
+  const [groupBy, setGroupBy] = useState([]);
+  const [labelColumn, setLabelColumn] = useState("");
   const [fetching, setFetching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -22,7 +26,12 @@ export default function CohortReport({ project, sampleCount = 0 }) {
     try {
       const res = await fetch(base);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
-      setState(await res.json());
+      const data = await res.json();
+      setState(data);
+      const saved = data.settings || {};
+      setColorBy(saved.color_by ?? "mlst");
+      setGroupBy(Array.isArray(saved.group_by) ? saved.group_by : []);
+      setLabelColumn(saved.label_column || "");
       setError("");
     } catch (e) {
       setError(e.message || String(e));
@@ -77,7 +86,11 @@ export default function CohortReport({ project, sampleCount = 0 }) {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(base, { method: "POST" });
+      const res = await fetch(base, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ color_by: colorBy, group_by: groupBy, label_column: labelColumn }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || res.statusText);
       watch(data.job_id, setBusy, "report");
@@ -92,6 +105,15 @@ export default function CohortReport({ project, sampleCount = 0 }) {
     `./api/projects/${encodeURIComponent(project)}/file?path=${encodeURIComponent(f.path)}${inline ? "&inline=1" : ""}`;
   const checks = state?.checks || {};
   const problems = checks.problems || [];
+  const fields = state?.fields || [];
+  const total = fields.length ? fields[0].isolates : 0;
+  const fieldText = (f) => `${f.label} (${f.distinct} value${f.distinct === 1 ? "" : "s"}${f.filled < f.isolates ? `, ${f.filled} of ${f.isolates} filled` : ""})`;
+  // A field with one value, or a different value for every isolate, makes no chart.
+  const chartable = fields.filter((f) => f.distinct >= 2 && f.distinct < f.isolates);
+  // A column can name the isolates only if every isolate has its own value.
+  const nameable = fields.filter((f) => f.source === "metadata" && f.distinct === total && f.filled === total);
+  const toggleGroup = (field) =>
+    setGroupBy((prev) => (prev.includes(field) ? prev.filter((g) => g !== field) : [...prev, field]));
   return (
     <section className="panel">
       <div className="panel-header">
@@ -118,6 +140,44 @@ export default function CohortReport({ project, sampleCount = 0 }) {
           ? `Metadata sheet: ${meta.rows} sample(s), ${meta.columns.length} column(s).`
           : "No metadata sheet yet. Fetch public metadata for SRA runs, or put a sample_metadata.tsv with a sample column in the project folder."}
       </div>
+      {fields.length > 0 && (
+        <div className="form-section">
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span className="form-label">Colour isolates by</span>
+              <select value={colorBy} onChange={(e) => setColorBy(e.target.value)} disabled={busy}>
+                <option value="">Nothing</option>
+                {fields.filter((f) => f.distinct < f.isolates || f.distinct <= 1).map((f) => (
+                  <option key={f.field} value={f.field}>{fieldText(f)}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span className="form-label">Name isolates from</span>
+              <select value={labelColumn} onChange={(e) => setLabelColumn(e.target.value)} disabled={busy}>
+                <option value="">Automatic (the column matching the tree)</option>
+                {nameable.map((f) => <option key={f.field} value={f.field}>{f.label}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="form-label" style={{ marginTop: 10 }}>Chart isolates by</div>
+          <div style={{ display: "flex", gap: "6px 14px", flexWrap: "wrap" }}>
+            {chartable.length === 0 && <span className="note">No field has groups to chart.</span>}
+            {chartable.map((f) => (
+              <label key={f.field} className="checkbox-label"
+                     style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={groupBy.includes(f.field)}
+                       onChange={() => toggleGroup(f.field)} disabled={busy} />
+                <span>{fieldText(f)}</span>
+              </label>
+            ))}
+          </div>
+          <div className="note" style={{ marginTop: 6 }}>
+            Fields come from the results and from the metadata sheet. Nothing is charted until you pick it.
+            Press {state?.exists ? "Rebuild" : "Build cohort report"} to apply.
+          </div>
+        </div>
+      )}
       {error && <div className="note" style={{ color: "var(--danger, #C46A6A)" }}>{error}</div>}
       {!state?.exists && !busy && !error && (
         <div className="empty-msg">

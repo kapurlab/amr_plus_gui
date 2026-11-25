@@ -112,9 +112,17 @@ each `amr/<sample>/` folder, an optional metadata sheet
 and the newest vSNP Step 2 run that holds a tree. It writes
 `<project>/cohort_report/`. Every count in its text is computed from the
 per-isolate table, and `cohort_checks.json` records where the layers do not
-line up (an isolate with no typing, a tree tip with no isolate, a metadata row
-with no results). Display names are taken from the metadata column that matches
-the tree's tips, so a vSNP metadata rename needs no extra setting.
+line up (an isolate with no typing while others have one, a tree tip with no
+isolate, a metadata row with no results).
+
+Nothing about a cohort is assumed. Which field colours the isolates, which
+fields get a chart and which column names them are choices, saved in
+`<project>/cohort_report/settings.json` and picked in the Cohort report panel
+from what the results and the metadata sheet actually hold. A field is `mlst`,
+`organism`, `serovar`, a metadata column, or `COLUMN|year`. No column name is
+hard-coded, a field that is not there is reported and not replaced by a guess,
+and a section or table column appears only when the project has data for it. A
+tree and alignment from any tool can be named in place of a vSNP Step 2 run.
 
 ### 9. One metadata sheet per project, filled from any source
 `<project>/sample_metadata.tsv` has a `sample` column and any other columns.

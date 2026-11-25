@@ -132,7 +132,7 @@ def _scale_bar(span: float) -> float:
 def tree_matrix(root: Node, tips: List[Node], tip_text: Dict[str, str],
                 tip_lineage: Dict[str, str], palette: Dict[str, str],
                 lineage_label: Dict[str, str], groups: List[ColumnGroup],
-                title: str, scale_unit: str = "") -> str:
+                title: str, scale_unit: str = "", color_title: str = "") -> str:
     """Draw the rooted, laid-out tree with one matrix row per tip.
 
     tip_text maps a tip's name to the label drawn; a tip missing from it is
@@ -142,7 +142,7 @@ def tree_matrix(root: Node, tips: List[Node], tip_text: Dict[str, str],
     tree_w = 250
     labels = {t.name: tip_text.get(t.name, t.name) for t in tips}
     label_w = max(_text_width(v, 10.5) for v in labels.values()) + 10
-    col_names = [c for g in groups for c in g.columns]
+    col_names = [c for g in groups for c in g.columns] + ([color_title] if color_title else [])
     head = max([_text_width(c, 10) for c in col_names] + [40]) * 0.94 + 46
     left = 12
     x_label = left + tree_w + 8
@@ -190,8 +190,9 @@ def tree_matrix(root: Node, tips: List[Node], tip_text: Dict[str, str],
         if t.name in tip_lineage:
             p.append(f'<rect x="{x_lineage:.0f}" y="{yy(t.y) - cell / 2:.1f}" width="{cell}" height="{cell}" '
                      f'rx="2" fill="{palette.get(tip_lineage[t.name], NO_LINEAGE)}"/>')
-    p.append(f'<text transform="translate({x_lineage + cell / 2 + 3:.0f},{head - 8:.0f}) rotate(-70)" '
-             f'font-size="10" fill="{MUTED}">lineage</text>')
+    if color_title:
+        p.append(f'<text transform="translate({x_lineage + cell / 2 + 3:.0f},{head - 8:.0f}) rotate(-70)" '
+                 f'font-size="10" fill="{MUTED}">{esc(color_title)}</text>')
 
     x = float(x_matrix)
     for g in groups:

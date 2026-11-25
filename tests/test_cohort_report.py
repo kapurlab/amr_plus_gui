@@ -152,27 +152,30 @@ def _project(tmp_path: Path, with_tree: bool = True) -> Path:
 
 def test_report_is_built_from_the_project_folder(tmp_path):
     project = _project(tmp_path)
-    result = cohort_report.build(project, make_pdf=False, log=lambda _m: None)
+    settings = cohort_report.Settings(group_by=["state"])
+    result = cohort_report.build(project, settings, make_pdf=False, log=lambda _m: None)
     out = project / "cohort_report"
-    assert {"cohort_report.html", "cohort_table.tsv", "cohort_checks.json"} <= set(p.name for p in out.iterdir())
+    assert {"cohort_report.html", "cohort_table.tsv", "cohort_checks.json", "settings.json"} <= set(p.name for p in out.iterdir())
     assert result["isolates"] == 3 and result["typed"] == 3 and result["in_tree"] == 3
     assert result["problems"] == []
-    # Display names come from the column that matches the tree's tips, and the
-    # grouping column is found by name.
-    assert result["label_column"] == "isolate" and result["group_by"] == "state"
+    # Display names come from the column that matches the tree's tips. The
+    # chart is the one that was asked for, and the colouring is MLST by default.
+    assert result["label_column"] == "isolate" and result["group_by"] == ["state"]
+    assert result["color_by"] == "mlst"
     assert result["rooting"] == "outgroup" and result["pairs"] == 3
     # mdsA and mdsB are in every isolate, so only S2's tet(A) counts as acquired.
     assert result["with_acquired_resistance"] == 1
     text = (out / "cohort_report.html").read_text(encoding="utf-8")
     for expected in ("ST10 n=2, ST3734 n=1", "Serovar: Dublin n=3", "gyrA_S83F", "IncFIA",
-                     "low-identity replicon: Col156", "minimum 1, median 4, maximum 5", "<svg"):
+                     "low-identity replicon: Col156", "minimum 1, median 4, maximum 5", "<svg",
+                     "MLST sequence type by state: 3 isolates"):
         assert expected in text, expected
     table = (out / "cohort_table.tsv").read_text(encoding="utf-8").splitlines()
     assert table[0].split("\t")[:3] == ["Isolate", "Sample", "state"]
     assert len(table) == 4
     row = dict(zip(table[0].split("\t"), next(r for r in table[1:] if r.startswith("ISO-2")).split("\t")))
     assert row["Resistance determinants"] == "tet(A)" and row["Low-identity replicons"] == "Col156"
-    assert row["Lineage"] == "ST10" and row["Serovar"] == "Dublin"
+    assert row["MLST"] == "ST10" and row["Serovar"] == "Dublin"
 
 
 def test_report_without_a_tree_says_so_and_still_builds(tmp_path):
@@ -196,8 +199,8 @@ def test_layers_that_do_not_line_up_are_reported(tmp_path):
     for expected in ("1 metadata row with no results in this project: S9",
                      "1 isolate with no metadata row: S4",
                      "1 tree tip with no isolate in this project: STRANGER",
-                     "1 isolate not in the Step 2 tree: S4",
-                     "1 isolate with no typing result"):
+                     "1 isolate not in the tree: S4",
+                     "1 isolate with no typing result while the others have one"):
         assert expected in problems, expected
     text = (project / "cohort_report" / "cohort_report.html").read_text(encoding="utf-8")
     assert "Check before using this report" in text
@@ -224,6 +227,84 @@ def test_a_serovar_disagreement_becomes_a_note_on_the_isolate(tmp_path):
     text = (project / "cohort_report" / "cohort_report.html").read_text(encoding="utf-8")
     assert "serovar: SISTR Dublin, SeqSero2 Enteritidis" in text
     assert "agree on 3 of 4 typed isolates" in " ".join(result["summary"])
+
+
+# ---------------------------------------------------------------------------
+# Nothing is assumed: fields are chosen, and sections follow the data
+# ---------------------------------------------------------------------------
+def test_no_chart_is_drawn_unless_a_field_is_chosen(tmp_path):
+    project = _project(tmp_path)
+    result = cohort_report.build(project, cohort_report.Settings(), make_pdf=False, log=lambda _m: None)
+    text = (project / "cohort_report" / "cohort_report.html").read_text(encoding="utf-8")
+    assert result["group_by"] == [] and " by state" not in text
+    # The sheet has a `state` column, and it is offered, not used.
+    assert "state" in [f["field"] for f in result["fields"]]
+
+
+def test_colour_and_charts_follow_the_chosen_metadata_fields(tmp_path):
+    project = _project(tmp_path)
+    (project / "sample_crosswalk.tsv").write_text(
+        "run\tisolate\tHerd\tcollected\nS1\tISO-1\tH7\t2023-06-05\nS2\tISO-2\tH7\t2024-01-31\nS3\tISO-3\tH9\t2024-11\n")
+    settings = cohort_report.Settings(color_by="Herd", group_by=["collected|year", "mlst"])
+    result = cohort_report.build(project, settings, make_pdf=False, log=lambda _m: None)
+    text = (project / "cohort_report" / "cohort_report.html").read_text(encoding="utf-8")
+    assert result["problems"] == [] and result["color_by"] == "Herd"
+    assert "Herd by collected (year): 3 isolates" in text and "Herd by MLST sequence type: 3 isolates" in text
+    assert "Herd: H7 n=2, H9 n=1." in " ".join(result["summary"])
+    assert "coloured by Herd" in text and "Columns after the total: isolates by Herd" in text
+    assert ">H7 (n=2)<" in text and ">2023<" in text and ">2024<" in text
+    # The choices are remembered and used by the next build that names none.
+    again = cohort_report.build(project, make_pdf=False, log=lambda _m: None)
+    assert again["color_by"] == "Herd" and again["group_by"] == ["collected|year", "mlst"]
+
+
+def test_a_chosen_field_that_is_not_there_is_reported_not_guessed(tmp_path):
+    project = _project(tmp_path)
+    settings = cohort_report.Settings(color_by="province", group_by=["district", "state"])
+    result = cohort_report.build(project, settings, make_pdf=False, log=lambda _m: None)
+    problems = " | ".join(result["problems"])
+    assert "'province', is not in the results or the metadata sheet" in problems
+    assert "'district', is not in the results or the metadata sheet" in problems
+    assert result["color_by"] == "" and result["group_by"] == ["state"]
+
+
+def test_a_project_with_no_typing_and_no_metadata_still_reports(tmp_path):
+    project = tmp_path / "plain"
+    project.mkdir()
+    for sample, st in (("A", "5"), ("B", "5"), ("C", "8")):
+        _isolate(project, sample, st, genes=("blaZ",) if sample == "A" else (), typing=False)
+        det = project / "amr" / sample / "organism_detection.json"
+        det.write_text(json.dumps({"dominant_species": "Staphylococcus aureus", "organism_token": "Staphylococcus_aureus",
+                                   "mlst_st": st, "mlst_scheme": "saureus"}))
+    result = cohort_report.build(project, cohort_report.Settings(), make_pdf=False, log=lambda _m: None)
+    text = (project / "cohort_report" / "cohort_report.html").read_text(encoding="utf-8")
+    assert result["problems"] == []                      # untyped everywhere is not a fault
+    assert "MLST (saureus scheme): ST5 n=2, ST8 n=1" in text
+    for absent in ("Serovar", "SISTR", "SeqSero2", "CheckM2 compl.", "Plasmid replicons and virulence",
+                   "Isolates and metadata", "Seven-gene", "cgMLST"):
+        assert absent not in text.replace("CheckM2 completeness (%)", "").replace("CheckM2 contamination (%)", ""), absent
+    assert "Per-isolate steps with results here" in text and "assembly, MLST, AMRFinderPlus<" in text
+
+
+def test_many_values_are_pooled_into_other():
+    values = {f"i{n}": f"v{n % 12}" for n in range(40)}
+    pooled, hidden = cohort_report.pooled(values)
+    kept = set(pooled.values())
+    assert cohort_report.OTHER in kept and len(kept) == cohort_report.MAX_CATEGORIES
+    assert hidden == 12 - (cohort_report.MAX_CATEGORIES - 1)
+    assert cohort_report.pooled({"a": "x", "b": "y"}) == ({"a": "x", "b": "y"}, 0)
+
+
+def test_fields_offered_come_from_results_and_the_sheet(tmp_path):
+    project = _project(tmp_path)
+    (project / "sample_crosswalk.tsv").write_text(
+        "run\tisolate\tstate\tcollected\nS1\tISO-1\tPR\t2023-06-05\nS2\tISO-2\tPR\t2024-01-31\nS3\tISO-3\tSP\t\n")
+    info = cohort_report.project_fields(project)
+    fields = {f["field"]: f for f in info["fields"]}
+    assert {"mlst", "organism", "serovar", "isolate", "state", "collected", "collected|year"} <= set(fields)
+    assert fields["state"]["distinct"] == 2 and fields["state"]["filled"] == 3
+    assert fields["collected|year"]["label"] == "collected (year)" and fields["collected"]["filled"] == 2
+    assert info["settings"]["color_by"] == "mlst" and info["settings"]["group_by"] == []
 
 
 def test_only_columns_that_tell_isolates_apart_are_printed():

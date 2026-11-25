@@ -1337,13 +1337,43 @@ def api_cohort_report_status(name: str):
         checks = json.loads((out / "cohort_checks.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
+    # The fields a report could be coloured or charted by, and the saved
+    # choices. Asked of the report script itself, so the GUI offers exactly
+    # what a build would accept.
+    offered: Dict[str, Any] = {"fields": [], "settings": {}}
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(_BIN_DIR / "cohort_report.py"), "--project", str(project_dir), "--list-fields"],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONPATH": str(_BIN_DIR)})
+        if proc.returncode == 0:
+            offered = json.loads(proc.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        pass
     return JSONResponse({"project": name, "exists": (out / "cohort_report.html").is_file(),
-                         "files": files, "checks": checks})
+                         "files": files, "checks": checks,
+                         "fields": offered.get("fields", []), "settings": offered.get("settings", {})})
+
+
+class CohortReportChoices(BaseModel):
+    """What the report should show. A field is `mlst`, `organism`, `serovar`,
+    a metadata column, or COLUMN|year. Left out means "as chosen before"."""
+    color_by: Optional[str] = None
+    group_by: Optional[List[str]] = None
+    label_column: Optional[str] = None
+    title: Optional[str] = None
+
+
+def _field_arg(value: str) -> str:
+    value = (value or "").strip()
+    if len(value) > 200 or any(ch in value for ch in "\n\r\0"):
+        raise HTTPException(400, "That field name cannot be used.")
+    return value
 
 
 @app.post("/api/projects/{name}/cohort-report")
-def api_cohort_report_build(name: str):
-    """Start a job that rebuilds the project's cohort report."""
+def api_cohort_report_build(name: str, choices: Optional[CohortReportChoices] = None):
+    """Start a job that rebuilds the project's cohort report with these choices."""
     project_dir = _get_project_dir(name)
     if project_dir is None:
         raise HTTPException(404, f"Project not found: {name}")
@@ -1353,6 +1383,16 @@ def api_cohort_report_build(name: str):
         if existing.get("status") == "running" and existing.get("name", "").startswith(f"{name} — cohort report"):
             raise HTTPException(409, "A cohort report is already being built for this project.")
     command = [sys.executable, "-u", str(_BIN_DIR / "cohort_report.py"), "--project", str(project_dir)]
+    if choices is not None:
+        # Passed as separate arguments, never through a shell.
+        if choices.color_by is not None:
+            command += [f"--color-by={_field_arg(choices.color_by)}"]
+        if choices.group_by is not None:
+            command += ["--group-by", *[_field_arg(g) for g in choices.group_by if g.strip()]]
+        if choices.label_column is not None:
+            command += [f"--label-column={_field_arg(choices.label_column)}"]
+        if choices.title is not None:
+            command += [f"--title={_field_arg(choices.title)}"]
     env = {"PYTHONPATH": str(_BIN_DIR), "PATH": os.environ.get("PATH", ""), "PYTHONUNBUFFERED": "1"}
     job_id = job_manager.start_job(name=f"{name} — cohort report", command=command,
                                    cwd=project_dir, env=env)

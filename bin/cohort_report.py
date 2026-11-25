@@ -24,10 +24,18 @@ tables and figures. Every count in the text is computed from the per-isolate
 table, and the checks say so when the layers do not line up (an isolate with
 no typing result, a tree tip with no isolate, a metadata row with no data).
 
+Nothing about the cohort is assumed. Which field colours the isolates, which
+fields get a chart, and which column names them are choices, kept in
+<project>/cohort_report/settings.json. A field is a result every run has
+(MLST sequence type, organism, serovar where it was called) or any column of
+the metadata sheet. A section appears only when the project has data for it.
+
 Usage:
-  cohort_report.py --project DIR [--metadata FILE] [--group-by COLUMN]
-      [--label-column COLUMN] [--step2-run ID] [--outgroup TIP]
-      [--title TEXT] [--no-pdf]
+  cohort_report.py --project DIR [--metadata FILE] [--color-by FIELD]
+      [--group-by FIELD ...] [--label-column COLUMN] [--title TEXT]
+      [--step2-run ID | --tree FILE [--alignment FILE]] [--outgroup TIP]
+      [--no-pdf]
+  cohort_report.py --project DIR --list-fields
 """
 
 from __future__ import annotations
@@ -35,10 +43,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import statistics
 import sys
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -59,9 +68,9 @@ C_VIRULENCE = "#3FA796"
 
 # The tip vSNP adds for the reference sequence.
 VSNP_REFERENCE_TIP = "root"
-# Metadata columns tried, in order, as the grouping column when none is named.
-GROUP_COLUMN_GUESSES = ("state", "geo_region", "group", "region", "province", "country",
-                        "geo_country", "source", "isolation_source")
+# The most values a colouring or a chart shows by name; the rest are pooled.
+MAX_CATEGORIES = 8
+OTHER = "other"
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +83,7 @@ class Isolate:
     meta: Dict[str, str] = field(default_factory=dict)
     organism: str = ""
     st: str = ""
+    scheme: str = ""
     serovar_sistr: str = ""
     serovar_seqsero2: str = ""
     serovar_agreement: str = ""
@@ -96,10 +106,6 @@ class Isolate:
     versions: Dict[str, str] = field(default_factory=dict)
     in_tree: bool = False
     notes: List[str] = field(default_factory=list)
-
-    @property
-    def lineage(self) -> str:
-        return self.st
 
     @property
     def serovar(self) -> str:
@@ -141,6 +147,7 @@ def load_isolate(run_dir: Path) -> Isolate:
     iso.organism = det.get("dominant_species") or det.get("organism_token") or ""
     st = str(det.get("mlst_st") or "").strip()
     iso.st = "" if st in ("", "-", "None") else st
+    iso.scheme = str(det.get("mlst_scheme") or "").strip()
     iso.contamination_flag = bool(det.get("contamination_flag"))
     metrics = qc.get("metrics") or {}
     iso.contigs, iso.length, iso.n50 = metrics.get("num_seqs"), metrics.get("total_length"), metrics.get("n50")
@@ -333,6 +340,110 @@ def distance_matrix(seqs: Dict[str, str], names: List[str]) -> List[List[Optiona
 
 
 # ---------------------------------------------------------------------------
+# What the report is asked to show
+# ---------------------------------------------------------------------------
+SETTINGS_NAME = "settings.json"
+# Fields read from the results themselves; every other field is a metadata column.
+RESULT_FIELDS = {"mlst": "MLST sequence type", "organism": "Organism", "serovar": "Serovar"}
+_NO_VALUE = {"", "missing", "not collected", "not applicable", "not provided", "unknown", "n/a", "na"}
+
+
+@dataclass
+class Settings:
+    """What was chosen for a project's report. A chart or a colouring appears
+    only for a field that was picked; no column name is assumed to exist."""
+
+    color_by: str = "mlst"       # field for the coloured squares and the stacks; "" for none
+    group_by: List[str] = field(default_factory=list)   # one bar chart per field
+    label_column: str = ""       # metadata column for display names; "" = the one matching the tree's tips
+    title: str = ""
+    step2_run: str = ""          # a vSNP Step 2 run folder; "" = the newest with a tree
+    tree: str = ""               # a Newick file to use instead of a Step 2 run
+    alignment: str = ""          # the alignment that goes with that tree, for distances
+    outgroup: str = ""           # tip to root on; "" = vSNP's reference tip when present, else midpoint
+
+
+def load_settings(project: Path) -> Settings:
+    try:
+        data = json.loads((Path(project) / "cohort_report" / SETTINGS_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return Settings()
+    known = {k: v for k, v in (data or {}).items() if k in Settings.__dataclass_fields__}
+    if isinstance(known.get("group_by"), str):
+        known["group_by"] = [known["group_by"]] if known["group_by"] else []
+    return Settings(**known)
+
+
+def save_settings(project: Path, settings: Settings) -> None:
+    out = Path(project) / "cohort_report"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / SETTINGS_NAME).write_text(json.dumps(asdict(settings), indent=2) + "\n", encoding="utf-8")
+
+
+def field_label(spec: str) -> str:
+    """How a field is named in the report. "collection_date|year" reads
+    "collection_date (year)"."""
+    if spec in RESULT_FIELDS:
+        return RESULT_FIELDS[spec]
+    column, _, how = spec.partition("|")
+    return f"{column} ({how})" if how else column
+
+
+def field_value(iso: "Isolate", spec: str) -> str:
+    """An isolate's value for a field, or "" when it has none."""
+    if spec == "mlst":
+        return f"ST{iso.st}" if iso.st else ""
+    if spec == "organism":
+        return iso.organism
+    if spec == "serovar":
+        return iso.serovar
+    column, _, how = spec.partition("|")
+    value = (iso.meta.get(column) or "").strip()
+    if value.lower() in _NO_VALUE:
+        return ""
+    if how == "year":
+        found = re.match(r"(\d{4})(?:\D|$)", value)
+        return found.group(1) if found else ""
+    return value
+
+
+def missing_text(spec: str) -> str:
+    return "no ST" if spec == "mlst" else "not given"
+
+
+def pooled(values: Dict[str, str]) -> Tuple[Dict[str, str], int]:
+    """Keep the MAX_CATEGORIES commonest values and call the rest "other".
+    Returns the mapping and how many distinct values were pooled."""
+    counts = Counter(v for v in values.values() if v)
+    if len(counts) <= MAX_CATEGORIES:
+        return values, 0
+    keep = {k for k, _ in counts.most_common(MAX_CATEGORIES - 1)}
+    return {k: (v if (not v or v in keep) else OTHER) for k, v in values.items()}, len(counts) - len(keep)
+
+
+def list_fields(isolates: List["Isolate"], columns: List[str]) -> List[Dict[str, Any]]:
+    """Every field a report could be coloured or charted by, with how many
+    isolates have a value and how many distinct values there are."""
+    out: List[Dict[str, Any]] = []
+
+    def add(spec: str, source: str) -> None:
+        values = [field_value(i, spec) for i in isolates]
+        filled = [v for v in values if v]
+        if filled:
+            out.append({"field": spec, "label": field_label(spec), "source": source,
+                        "filled": len(filled), "distinct": len(set(filled)), "isolates": len(isolates)})
+
+    for spec in RESULT_FIELDS:
+        add(spec, "results")
+    for column in columns:
+        add(column, "metadata")
+        dated = [v for v in (field_value(i, column) for i in isolates) if v]
+        if dated and sum(bool(re.match(r"\d{4}(-\d{1,2}){0,2}$", v)) for v in dated) * 2 >= len(dated):
+            add(f"{column}|year", "metadata")
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Small helpers for the text
 # ---------------------------------------------------------------------------
 def _num(v: Optional[float], digits: int = 0) -> str:
@@ -363,14 +474,17 @@ def _plural(n: int, word: str) -> str:
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
-def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str] = None,
-          label_column: Optional[str] = None, step2_run: Optional[str] = None,
-          outgroup: Optional[str] = VSNP_REFERENCE_TIP, title: Optional[str] = None,
+def build(project: Path, settings: Optional[Settings] = None, metadata: Optional[Path] = None,
           make_pdf: bool = True, log=print) -> Dict[str, Any]:
+    """Build the report. `settings` are the choices to use and to remember;
+    without them the project's saved choices are used."""
     project = Path(project).expanduser().resolve()
     outdir = project / "cohort_report"
     problems: List[str] = []
     info: List[str] = []
+    settings = settings if settings is not None else load_settings(project)
+    label_column: Optional[str] = settings.label_column or None
+    title: Optional[str] = settings.title or None
 
     isolates = load_isolates(project)
     if not isolates:
@@ -379,22 +493,37 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
     proj = _load_json(project / "project.json")
 
     # ---- the tree, so the metadata's label column can be matched to its tips ----
-    step2 = find_step2(project, step2_run)
+    # A tree file that was named, else the newest vSNP Step 2 run that has one.
+    from_file = bool(settings.tree)
+    if from_file:
+        tree_path = Path(settings.tree) if Path(settings.tree).is_absolute() else project / settings.tree
+        alignment_path = None
+        if settings.alignment:
+            alignment_path = (Path(settings.alignment) if Path(settings.alignment).is_absolute()
+                              else project / settings.alignment)
+        step2: Optional[Step2] = Step2("", "", tree_path, alignment_path)
+        outgroup: Optional[str] = settings.outgroup or None
+    else:
+        step2 = find_step2(project, settings.step2_run or None)
+        outgroup = settings.outgroup or VSNP_REFERENCE_TIP
     root = tips = None
     rooting = ""
     seqs: Dict[str, str] = {}
     if step2 is None:
-        info.append("No vSNP Step 2 tree was found in this project, so the report has no "
-                    "phylogeny or distance section.")
+        info.append("This project has no tree (no vSNP Step 2 run with one, and none was named), "
+                    "so the report has no phylogeny or distance section.")
     else:
         try:
             root, tips, rooting = cohort_tree.prepared(
                 step2.tree_path.read_text(encoding="utf-8", errors="replace"), outgroup)
         except (OSError, cohort_tree.NewickError) as exc:
-            problems.append(f"The Step 2 tree {step2.tree_path.name} could not be read: {exc}")
+            problems.append(f"The tree {step2.tree_path.name} could not be read: {exc}")
             root = tips = None
         if step2.alignment_path is not None:
-            seqs = read_fasta(step2.alignment_path)
+            try:
+                seqs = read_fasta(step2.alignment_path)
+            except OSError as exc:
+                problems.append(f"The alignment {step2.alignment_path.name} could not be read: {exc}")
     tip_names = [t.name for t in tips] if tips else []
 
     # ---- metadata: sample column, label column, grouping column ----
@@ -429,13 +558,24 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         guess, hits = best_column(header, rows, set(tip_names))
         if guess and hits > len(samples & set(tip_names)):
             label_column = guess
-    if group_by and group_by not in header:
-        problems.append(f"The grouping column '{group_by}' is not in the metadata sheet.")
-        group_by = None
-    if not group_by:
-        lower = {h.lower(): h for h in header}
-        group_by = next((lower[g] for g in GROUP_COLUMN_GUESSES if g in lower), None)
     meta_cols = [h for h in header if h not in (sample_col, label_column)]
+
+    # ---- the chosen fields: each must exist, and none is guessed ----
+    def known_field(spec: str) -> bool:
+        return spec in RESULT_FIELDS or spec.partition("|")[0] in header
+
+    color_spec = settings.color_by or ""
+    if color_spec and not known_field(color_spec):
+        problems.append(f"The field chosen to colour by, '{field_label(color_spec)}', is not in the "
+                        "results or the metadata sheet. Isolates are not coloured.")
+        color_spec = ""
+    group_specs: List[str] = []
+    for spec in settings.group_by:
+        if not known_field(spec):
+            problems.append(f"The field chosen for a chart, '{field_label(spec)}', is not in the "
+                            "results or the metadata sheet. That chart was left out.")
+        elif spec not in group_specs:
+            group_specs.append(spec)
 
     for iso in isolates:
         iso.meta = by_sample.get(iso.sample, {})
@@ -457,15 +597,16 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
             problems.append(f"{_plural(len(strangers), 'tree tip')} with no isolate in this project: "
                             + ", ".join(strangers[:12]) + (" …" if len(strangers) > 12 else ""))
         if absent:
-            problems.append(f"{_plural(len(absent), 'isolate')} not in the Step 2 tree: "
+            problems.append(f"{_plural(len(absent), 'isolate')} not in the tree: "
                             + ", ".join(absent[:12]) + (" …" if len(absent) > 12 else ""))
 
     # ---- notes that change how a call is read ----
+    # A project where no isolate was typed simply has no typing sections. It is
+    # a problem only when some were typed and others were not.
     untyped = [i.label for i in isolates if not i.has_typing]
-    if untyped:
-        problems.append(f"{_plural(len(untyped), 'isolate')} with no typing result (the typing tools "
-                        "were not installed or the run predates them): " + ", ".join(untyped[:12])
-                        + (" …" if len(untyped) > 12 else ""))
+    if untyped and len(untyped) < len(isolates):
+        problems.append(f"{_plural(len(untyped), 'isolate')} with no typing result while the others "
+                        "have one: " + ", ".join(untyped[:12]) + (" …" if len(untyped) > 12 else ""))
     for iso in isolates:
         if not iso.has_amr:
             iso.notes.append("no AMRFinderPlus result")
@@ -511,9 +652,28 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
     acquired_all = [g for g in res_all if any(g in i.acquired for i in isolates)]
     with_acquired = [i for i in isolates if any(g not in acquired_all for g in i.acquired)]
 
-    lineages = Counter(i.lineage for i in isolates)
-    palette = fig.lineage_palette([k for k, _ in lineages.most_common()])
-    lineage_label = {k: lineage_text(k) for k in palette}
+    # ---- the colouring: one colour per value of the chosen field ----
+    color_of, pooled_values = pooled({i.label: (field_value(i, color_spec) if color_spec else "")
+                                      for i in isolates})
+    color_counts = Counter(color_of.values())
+    order = [k for k, _ in color_counts.most_common() if k and k != OTHER] + ([OTHER] if OTHER in color_counts else [])
+    palette = fig.lineage_palette(order)
+    if OTHER in palette:
+        palette[OTHER] = fig.NO_LINEAGE
+    color_name = field_label(color_spec) if color_spec else ""
+    color_label = {k: k for k in palette}
+    color_label[""] = missing_text(color_spec) if color_spec else "isolates"
+    if pooled_values:
+        info.append(f"{color_name} has {len(order) - 1 + pooled_values} values; the {pooled_values} "
+                    f"least common are shown together as \"{OTHER}\".")
+    color_keys = order + ([""] if "" in color_counts else [])
+
+    # MLST is reported whenever the runs have it, whatever the colouring is.
+    st_counts = Counter(lineage_text(i.st) for i in isolates)
+    schemes = Counter(i.scheme for i in isolates if i.scheme)
+    has_mlst = any(i.st or i.scheme for i in isolates)
+    mlst_line = ("MLST" + (f" ({', '.join(k for k, _ in schemes.most_common())} scheme)" if schemes else "")
+                 + ": " + counts_text(st_counts)) if has_mlst else ""
 
     # ---- distances, in tree order ----
     ordered = [by_label[t.name] for t in tips if t.name in by_label] if tips else []
@@ -537,14 +697,17 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
 
     # ---- figures ----
     figures: Dict[str, str] = {}
-    if group_by:
+    bar_figures: List[str] = []
+    for spec in group_specs:
+        group_of, _ = pooled({i.label: field_value(i, spec) for i in isolates})
         grouped: Dict[str, Dict[str, int]] = {}
         for iso in isolates:
-            g = iso.meta.get(group_by, "") or "not given"
+            g = group_of[iso.label] or missing_text(spec)
             grouped.setdefault(g, {})
-            grouped[g][iso.lineage] = grouped[g].get(iso.lineage, 0) + 1
-        figures["bars"] = fig.stacked_bars(grouped, palette, lineage_label,
-                                           f"Lineage by {group_by}: {n} isolates, seven-gene MLST")
+            grouped[g][color_of[iso.label]] = grouped[g].get(color_of[iso.label], 0) + 1
+        heading = (f"{color_name} by {field_label(spec)}" if color_spec and color_spec != spec
+                   else f"Isolates by {field_label(spec)}")
+        bar_figures.append(fig.stacked_bars(grouped, palette, color_label, f"{heading}: {n} isolates"))
     if tips:
         def block(title, color, cols, getter, has_data, low_getter=None, low_color=None):
             values: Dict[str, Dict[str, str]] = {}
@@ -567,12 +730,14 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         ]
         tip_text = {i.label: i.label for i in isolates}
         figures["tree"] = fig.tree_matrix(
-            root, tips, tip_text, {i.label: i.lineage for i in isolates}, palette, lineage_label,
+            root, tips, tip_text, color_of, palette, color_label,
             [b for b in blocks if b.columns],
-            "Phylogeny, lineage and gene content", "substitutions per SNP site")
+            "Phylogeny and gene content" + (f", coloured by {color_name}" if color_spec else ""),
+            "substitutions per site", color_name or "")
     if matrix:
         figures["heat"] = fig.heatmap(
-            [i.label for i in ordered], matrix, [palette.get(i.lineage, fig.NO_LINEAGE) for i in ordered],
+            [i.label for i in ordered], matrix,
+            [palette.get(color_of[i.label], fig.NO_LINEAGE) for i in ordered],
             "Pairwise SNP distances, in tree order", "SNPs (square-root colour scale)")
 
     # ---- the per-isolate table ----
@@ -581,7 +746,7 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         return ", ".join(kept) if kept else "–"
 
     table_header = (["Isolate", "Sample"] + meta_cols
-                    + ["Lineage", "Serovar", "Contigs", "N50", "Length", "CheckM2 compl. / contam.",
+                    + ["MLST", "Serovar", "Contigs", "N50", "Length", "CheckM2 compl. / contam.",
                        "cgMLST match", "Resistance determinants", "Plasmid replicons",
                        "Low-identity replicons", "Virulence genes", "Notes"])
     order_for_table = ordered + [i for i in isolates if i not in ordered]
@@ -589,7 +754,7 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
     for iso in order_for_table:
         table_rows.append(
             [iso.label, iso.sample] + [iso.meta.get(c, "") for c in meta_cols]
-            + [lineage_text(iso.lineage), iso.serovar or "—", _num(iso.contigs), _num(iso.n50),
+            + [(lineage_text(iso.st) if has_mlst else "—"), iso.serovar or "—", _num(iso.contigs), _num(iso.n50),
                _num(iso.length),
                (f"{iso.completeness:.2f} / {iso.contamination:.2f}"
                 if iso.completeness is not None and iso.contamination is not None else "—"),
@@ -609,7 +774,11 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         agree = sum(1 for i in typed if i.serovar_agreement == "agree")
         summary.append(f"Serovar: {counts_text(serovars)}. SISTR and SeqSero2 agree on {agree} of "
                        f"{len(typed)} typed isolates.")
-    summary.append(f"Seven-gene MLST: {counts_text(lineages, lineage_text)}.")
+    if mlst_line:
+        summary.append(mlst_line + ".")
+    if color_spec and color_spec not in ("mlst", "serovar", "organism"):
+        summary.append(f"{color_name}: "
+                       + counts_text(Counter(color_label[v] for v in color_of.values())) + ".")
     if any(i.has_amr for i in isolates):
         with_amr = sum(1 for i in isolates if i.has_amr)
         summary.append(f"{len(with_acquired)} of {with_amr} isolates carry at least one acquired "
@@ -636,7 +805,8 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
     headline = [_plural(n, "isolate")]
     if serovars:
         headline.append("serovar " + ", ".join(k for k, _ in serovars.most_common(3)))
-    headline.append(_plural(len(lineages), "MLST lineage"))
+    if has_mlst:
+        headline.append(_plural(len([k for k in st_counts if k != lineage_text("")]), "MLST type"))
     if any(i.has_amr for i in isolates):
         headline.append(f"{len(with_acquired)} with acquired resistance genes")
     if problems:
@@ -665,24 +835,29 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
                  + "".join("<tr>" + "".join(f"<td>{_e(c)}</td>" for c in r) + "</tr>" for r in qrows)
                  + "</tbody></table>")
 
-    parts.append("<h2>Serovar and lineage</h2>")
+    if serovars or mlst_line or bar_figures:
+        parts.append("<h2>" + ("Typing and groups" if (serovars or mlst_line) else "Groups") + "</h2>")
     if serovars:
         parts.append(f"<p>Serovar: {_e(counts_text(serovars))}. Serovar is called by SISTR and by "
                      "SeqSero2. SISTR uses cgMLST with the antigen genes, so its serovar and its "
                      "cgMLST result are one method, and SeqSero2 is the independent second.</p>")
-    parts.append(f"<p>Seven-gene MLST: {_e(counts_text(lineages, lineage_text))}.</p>")
-    if figures.get("bars"):
-        parts.append(f'<div class="scroll">{figures["bars"]}</div>')
+    if mlst_line:
+        parts.append(f"<p>{_e(mlst_line)}.</p>")
+    for svg in bar_figures:
+        parts.append(f'<div class="scroll figure">{svg}</div>')
 
     if figures.get("tree"):
         parts.append('<h2 class="newpage">Phylogeny and gene content</h2>')
         parts.append(f'<div class="scroll figure">{figures["tree"]}</div>')
-        rooted = ("rooted with the reference as outgroup, which is not drawn" if rooting == "outgroup"
-                  else "rooted at the midpoint of the longest tip-to-tip path")
+        rooted = (f'rooted with the tip "{outgroup}" as outgroup, which is not drawn'
+                  if rooting == "outgroup" else "rooted at the midpoint of the longest tip-to-tip path")
+        tree_from = (f"the file {step2.tree_path.name}" if from_file else
+                     f"vSNP Step 2 run {step2.run_id}, group {step2.group}, reference {reference_name}")
         parts.append(
-            f'<p class="small">Tree from vSNP Step 2 run {_e(step2.run_id)}, group {_e(step2.group)}, '
-            f'reference {_e(reference_name)}, {rooted}. '
-            + f"{alignment_columns:,} SNP positions. Columns show what varies: determinants and "
+            f'<p class="small">Tree from {_e(tree_from)}, {rooted}. '
+            + (f"{alignment_columns:,} alignment positions. " if alignment_columns else "")
+            + (f"The square beside each name is its {_e(color_name)}. " if color_spec else "")
+            + "Columns show what varies: determinants and "
               "virulence genes found in every isolate are left out and listed below. A paler "
               "replicon square is a low-identity match. An isolate with no squares in a block has "
               "no result for it.</p>")
@@ -696,25 +871,31 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         parts.append(f"<p>Across {len(pair_values):,} pairs: minimum {min(pair_values):,}, median "
                      f"{statistics.median(pair_values):,.0f}, maximum {max(pair_values):,} SNPs.</p>")
         parts.append(f'<div class="scroll figure">{figures["heat"]}</div>')
-        parts.append('<p class="small">These are reference-mapped SNPs from the vSNP Step 2 alignment, '
-                     "after its position filters. A position where either isolate has no call or a "
-                     "mixed call is not counted for that pair. They are not comparable with distances "
-                     "from a core-gene alignment.</p>")
+        source_text = (f"Differences between isolates in the alignment {step2.alignment_path.name}."
+                       if from_file else
+                       "These are reference-mapped SNPs from the vSNP Step 2 alignment, after its "
+                       "position filters. They are not comparable with distances from a core-gene "
+                       "alignment.")
+        parts.append(f'<p class="small">{_e(source_text)} A position where either isolate has no call '
+                     "or a mixed call is not counted for that pair.</p>")
 
     if any(i.has_amr for i in isolates):
         parts.append("<h2>Antimicrobial resistance</h2>")
         det = Counter(x for i in isolates for x in i.resistance if x not in res_all)
         if det:
-            keys = [k for k, _ in lineages.most_common()]
-            head = "".join(f"<th>{_e(lineage_text(k))} (n={lineages[k]})</th>" for k in keys)
+            # Broken down by the field the isolates are coloured by, when there is one.
+            keys = color_keys if color_spec else []
+            head = "".join(f"<th>{_e(color_label[k])} (n={color_counts[k]})</th>" for k in keys)
             body = []
             for name, total in sorted(det.items(), key=lambda kv: (-kv[1], kv[0])):
                 cells = "".join(
-                    f"<td>{sum(1 for i in isolates if i.lineage == k and name in i.resistance) or ''}</td>"
+                    f"<td>{sum(1 for i in isolates if color_of[i.label] == k and name in i.resistance) or ''}</td>"
                     for k in keys)
                 body.append(f"<tr><td>{_e(name)}</td><td>{total}</td>{cells}</tr>")
             parts.append('<div class="scroll"><table class="grid"><thead><tr><th>Determinant</th>'
                          f"<th>Isolates</th>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>")
+            if keys:
+                parts.append(f'<p class="small">Columns after the total: isolates by {_e(color_name)}.</p>')
         else:
             parts.append('<p class="muted">No resistance determinant varies between isolates.</p>')
         parts.append('<p class="small">Results are genotypic. A gene or mutation that is present does '
@@ -735,6 +916,9 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
                          + (_e(", ".join(f"{k} in {vcount[k]}" for k in vir_cols)) or "none") + ".</p>")
 
     def html_table(columns: List[int]) -> str:
+        # A column no isolate has a value for (a step that did not run for this
+        # project, a field this organism does not have) is not printed.
+        columns = [c for c in columns if any(r[c] not in ("", "—") for r in table_rows)]
         thead = "".join(f"<th>{_e(table_header[c])}</th>" for c in columns)
         body = "".join("<tr>" + "".join(f"<td>{_e(r[c]) if r[c] != '' else ''}</td>" for c in columns) + "</tr>"
                        for r in table_rows)
@@ -767,21 +951,31 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
     for iso in isolates:
         for k, v in iso.versions.items():
             version_rows.setdefault(k, Counter())[v] += 1
-    mrows = [("Per-isolate pipeline", "reads to assembly (shovill or SPAdes), MLST, AMRFinderPlus, then "
-              "SISTR, SeqSero2, abricate (PlasmidFinder, VFDB) and CheckM2 on the same assembly")]
+    # Named from what the runs actually recorded, not from what the pipeline can do.
+    ran = ["assembly"] + [name for name, present in (
+        ("MLST", has_mlst), ("AMRFinderPlus", any(i.has_amr for i in isolates)),
+        ("SISTR", "sistr" in version_rows), ("SeqSero2", "seqsero2" in version_rows),
+        ("abricate", "abricate" in version_rows), ("CheckM2", "checkm2" in version_rows)) if present]
+    mrows = [("Per-isolate steps with results here", ", ".join(ran))]
     for k in sorted(version_rows):
         c = version_rows[k]
         mrows.append((k, "; ".join(f"{v} ({m} isolates)" if len(c) > 1 else v for v, m in c.most_common())))
-    if step2 is not None:
-        mrows.append(("Phylogeny and distances", f"vSNP Step 2 run {step2.run_id}, group {step2.group}, "
-                      f"reference {reference_name}; tree file {step2.tree_path.name}"))
+    if step2 is not None and tips:
+        mrows.append(("Phylogeny and distances",
+                      (f"tree file {step2.tree_path.name}" if from_file else
+                       f"vSNP Step 2 run {step2.run_id}, group {step2.group}, reference {reference_name}; "
+                       f"tree file {step2.tree_path.name}")
+                      + (f"; alignment {step2.alignment_path.name}" if step2.alignment_path is not None else "")))
     if metadata is not None:
         mrows.append(("Metadata sheet", f"{Path(metadata).name}; sample column {sample_col or '—'}, "
-                      f"display names from {label_column or 'the sample names'}, grouped by {group_by or '—'}"))
+                      f"display names from {label_column or 'the sample names'}"))
+    mrows.append(("Chosen for this report",
+                  f"coloured by {color_name or 'nothing'}; charts by "
+                  + (", ".join(field_label(g) for g in group_specs) or "none")))
     parts.append('<table class="kv">' + "".join(f"<tr><th>{_e(a)}</th><td>{_e(b)}</td></tr>" for a, b in mrows) + "</table>")
     parts.append('<p class="small">Every figure in this report is read from the per-isolate result '
-                 "folders and the Step 2 run named above. cohort_checks.json beside this file lists the "
-                 "consistency checks and what they found.</p>")
+                 "folders, the metadata sheet and the tree named above. cohort_checks.json beside this "
+                 "file lists the consistency checks and what they found.</p>")
 
     # Landscape pages, figures scaled to the page, and smaller type in the two
     # wide tables, so nothing runs off the edge of the PDF.
@@ -824,11 +1018,16 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
         pdf_ok = html_to_pdf(html_path, outdir / "cohort_report.pdf")
         log("wrote cohort_report.pdf" if pdf_ok else "NOTE: WeasyPrint is not available; no PDF written.")
 
+    save_settings(project, settings)
     result = {
         "project": str(project), "generated": stamp, "isolates": n, "typed": len(typed),
-        "in_tree": sum(1 for i in isolates if i.in_tree), "step2_run": step2.run_id if step2 else None,
+        "in_tree": sum(1 for i in isolates if i.in_tree),
+        "step2_run": (step2.run_id or None) if step2 else None,
+        "tree": step2.tree_path.name if (step2 and tips) else None,
         "metadata": str(metadata) if metadata else None, "label_column": label_column,
-        "group_by": group_by, "rooting": rooting, "alignment_columns": alignment_columns,
+        "color_by": color_spec, "group_by": group_specs, "settings": asdict(settings),
+        "fields": list_fields(isolates, meta_cols + ([label_column] if label_column else [])),
+        "rooting": rooting, "alignment_columns": alignment_columns,
         "pairs": len(pair_values), "problems": problems, "info": info, "summary": summary,
         "with_acquired_resistance": len(with_acquired), "pdf": pdf_ok,
         "files": sorted(p.name for p in outdir.iterdir() if p.is_file()),
@@ -837,23 +1036,60 @@ def build(project: Path, metadata: Optional[Path] = None, group_by: Optional[str
     return result
 
 
+def project_fields(project: Path, metadata: Optional[Path] = None) -> Dict[str, Any]:
+    """The fields this project's report could use, and the choices saved for it."""
+    project = Path(project).expanduser().resolve()
+    isolates = load_isolates(project)
+    metadata = metadata or find_metadata(project)
+    columns: List[str] = []
+    if metadata is not None and isolates:
+        try:
+            header, rows = read_table(Path(metadata))
+            sample_col, _ = best_column(header, rows, {i.sample for i in isolates})
+            by_sample = {r[sample_col]: r for r in rows} if sample_col else {}
+            for iso in isolates:
+                iso.meta = by_sample.get(iso.sample, {})
+            columns = [h for h in header if h != sample_col]
+        except Exception:  # noqa: BLE001: an unreadable sheet offers no fields
+            columns = []
+    return {"isolates": len(isolates), "metadata": str(metadata) if metadata else None,
+            "fields": list_fields(isolates, columns), "settings": asdict(load_settings(project))}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Build the cohort report for a project.")
     ap.add_argument("--project", type=Path, required=True)
     ap.add_argument("--metadata", type=Path, default=None,
                     help="metadata sheet (.tsv, .csv, .xlsx); default: the project's "
                          "sample_metadata.tsv, else sample_crosswalk.tsv or metadata.*")
-    ap.add_argument("--group-by", default=None, help="metadata column for the lineage chart")
+    ap.add_argument("--list-fields", action="store_true",
+                    help="print, as JSON, the fields a report could use and the saved choices")
+    # Each choice below is remembered for the project. Leave one out to keep
+    # what was chosen before.
+    ap.add_argument("--color-by", default=None,
+                    help="field for the coloured squares and stacks: mlst, organism, serovar, or a "
+                         "metadata column (COLUMN|year for the year of a date); '' for none")
+    ap.add_argument("--group-by", nargs="*", default=None,
+                    help="fields to chart isolates by, one chart each; give none to have no chart")
     ap.add_argument("--label-column", default=None,
-                    help="metadata column holding display names; default: the column matching the tree's tips")
-    ap.add_argument("--step2-run", default=None, help="Step 2 run folder name; default: the newest with a tree")
-    ap.add_argument("--outgroup", default=VSNP_REFERENCE_TIP,
-                    help="tree tip to root on; default: vSNP's reference tip, else midpoint rooting")
+                    help="metadata column holding display names; '' = the column matching the tree's tips")
     ap.add_argument("--title", default=None)
+    ap.add_argument("--step2-run", default=None, help="vSNP Step 2 run folder; '' = the newest with a tree")
+    ap.add_argument("--tree", default=None, help="a Newick file to use instead of a vSNP Step 2 run")
+    ap.add_argument("--alignment", default=None, help="the alignment that goes with --tree, for distances")
+    ap.add_argument("--outgroup", default=None,
+                    help="tree tip to root on; '' = vSNP's reference tip when present, else the midpoint")
     ap.add_argument("--no-pdf", action="store_true")
     args = ap.parse_args(argv)
-    result = build(args.project, args.metadata, args.group_by, args.label_column, args.step2_run,
-                   args.outgroup, args.title, make_pdf=not args.no_pdf)
+    if args.list_fields:
+        print(json.dumps(project_fields(args.project, args.metadata), indent=2))
+        return 0
+    settings = load_settings(args.project.expanduser().resolve())
+    for name in ("color_by", "group_by", "label_column", "title", "step2_run", "tree", "alignment", "outgroup"):
+        value = getattr(args, name)
+        if value is not None:
+            setattr(settings, name, value)
+    result = build(args.project, settings, args.metadata, make_pdf=not args.no_pdf)
     for line in result["summary"]:
         print("  " + line)
     for line in result["problems"]:

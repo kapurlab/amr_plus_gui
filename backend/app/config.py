@@ -142,7 +142,29 @@ DEFAULTS: Dict[str, Any] = {
     # default_typing_root); set it only to point somewhere else.
     "typing_root": "",
     "checkm2_db": _CHECKM2_DB_DEFAULT,
+    # The iTOL project the last tree was sent to, offered again next time.
+    "itol_project": "",
 }
+
+# The iTOL API key is a secret, so it is kept out of config.json, which the
+# GUI reads back in full. It comes from the ITOL_API_KEY environment variable,
+# or from this file, which its owner writes and should make readable only by
+# themselves (chmod 600).
+ITOL_KEY_PATH = DATA_DIR / "itol_api_key"
+
+
+def itol_api_key() -> str:
+    """This user's iTOL API key, or "" when none is set."""
+    env = os.environ.get("ITOL_API_KEY", "").strip()
+    if env:
+        return env
+    try:
+        for line in ITOL_KEY_PATH.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.lstrip().startswith("#"):
+                return line.strip()
+    except OSError:
+        pass
+    return ""
 
 
 def load_config() -> Dict[str, Any]:

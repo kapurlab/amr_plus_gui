@@ -17,6 +17,14 @@ export default function CohortReport({ project, sampleCount = 0 }) {
   const [fetching, setFetching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Sending the tree to iTOL. Nothing is sent until the form is confirmed.
+  const [itolOpen, setItolOpen] = useState(false);
+  const [itolProject, setItolProject] = useState("");
+  const [itolName, setItolName] = useState("");
+  const [itolPopup, setItolPopup] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(null);
+  const [itolError, setItolError] = useState("");
   const timer = useRef(null);
   const base = `./api/projects/${encodeURIComponent(project || "")}/cohort-report`;
   const metaBase = `./api/projects/${encodeURIComponent(project || "")}/sample-metadata`;
@@ -32,6 +40,7 @@ export default function CohortReport({ project, sampleCount = 0 }) {
       setColorBy(saved.color_by ?? "mlst");
       setGroupBy(Array.isArray(saved.group_by) ? saved.group_by : []);
       setLabelColumn(saved.label_column || "");
+      setItolProject((prev) => prev || data.itol?.project || data.itol?.last?.itol_project || "");
       setError("");
     } catch (e) {
       setError(e.message || String(e));
@@ -48,6 +57,13 @@ export default function CohortReport({ project, sampleCount = 0 }) {
     setFetching(false);
     setBusy(false);
     setError("");
+    setItolOpen(false);
+    setItolProject("");
+    setItolName(project || "");
+    setItolPopup(true);
+    setSending(false);
+    setSent(null);
+    setItolError("");
     load();
     return () => { if (timer.current) clearTimeout(timer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -100,10 +116,35 @@ export default function CohortReport({ project, sampleCount = 0 }) {
     }
   }
 
+  // Send the tree and its annotations to the user's iTOL account.
+  async function sendToItol() {
+    setSending(true);
+    setItolError("");
+    setSent(null);
+    try {
+      const res = await fetch(`${base}/itol-upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itol_project: itolProject.trim(), tree_name: itolName.trim() || project,
+                               include_popup: itolPopup }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      setSent(data);
+      setItolOpen(false);
+      load();
+    } catch (e) {
+      setItolError(e.message || String(e));
+    } finally {
+      setSending(false);
+    }
+  }
+
   if (!project) return null;
   const href = (f, inline) =>
     `./api/projects/${encodeURIComponent(project)}/file?path=${encodeURIComponent(f.path)}${inline ? "&inline=1" : ""}`;
   const checks = state?.checks || {};
+  const itol = state?.itol || {};
   const problems = checks.problems || [];
   const fields = state?.fields || [];
   const total = fields.length ? fields[0].isolates : 0;
@@ -194,6 +235,77 @@ export default function CohortReport({ project, sampleCount = 0 }) {
               </a>
             ))}
           </div>
+          {itol.available && (
+            <div className="form-section">
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <button className="ghost action" onClick={() => { setItolOpen((o) => !o); setItolError(""); }}
+                        disabled={sending || busy || !itol.configured}
+                        title="Upload this tree and its annotations to your iTOL account">
+                  Send to iTOL…
+                </button>
+                {sent?.url && (
+                  <span className="note">
+                    Sent. <a href={sent.url} target="_blank" rel="noopener noreferrer">Open the tree in iTOL</a>
+                  </span>
+                )}
+                {!sent && itol.last?.url && (
+                  <span className="note">
+                    Last sent {itol.last.uploaded} to {itol.last.itol_project}:{" "}
+                    <a href={itol.last.url} target="_blank" rel="noopener noreferrer">open in iTOL</a>
+                  </span>
+                )}
+              </div>
+              {!itol.configured && (
+                <div className="note">
+                  To send trees to iTOL from here, save your iTOL API key in <code>{itol.key_file}</code> on
+                  this server, readable only by you. Batch upload needs an iTOL subscription.
+                </div>
+              )}
+              {itolOpen && itol.configured && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span className="form-label">iTOL project (must already exist)</span>
+                      <input type="text" value={itolProject} onChange={(e) => setItolProject(e.target.value)}
+                             disabled={sending} />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span className="form-label">Tree name in iTOL</span>
+                      <input type="text" value={itolName} onChange={(e) => setItolName(e.target.value)}
+                             disabled={sending} />
+                    </label>
+                  </div>
+                  <label className="checkbox-label"
+                         style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginTop: 8 }}>
+                    <input type="checkbox" checked={itolPopup} onChange={(e) => setItolPopup(e.target.checked)}
+                           disabled={sending} />
+                    <span>Include the details shown when a tip is clicked (every column of the metadata sheet)</span>
+                  </label>
+                  <div className="note" style={{ marginTop: 6 }}>
+                    This sends the tree, the isolate names and the annotations to itol.embl.de, into your
+                    iTOL account. Each send makes a new tree there.
+                  </div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+                    <button className="action" onClick={sendToItol} disabled={sending || !itolProject.trim()}>
+                      {sending ? "Sending…" : "Send"}
+                    </button>
+                    <button className="ghost action" onClick={() => setItolOpen(false)} disabled={sending}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {itolError && <div className="note" style={{ color: "var(--danger, #C46A6A)" }}>{itolError}</div>}
+              {(sent?.warnings || []).length > 0 && (
+                <>
+                  <div className="note">iTOL accepted the tree and reported:</div>
+                  <ul style={{ margin: "6px 0 6px 18px", padding: 0 }}>
+                    {sent.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
           <div className="note">
             Built {checks.generated || "—"} from {checks.isolates ?? "—"} isolate(s)
             {checks.step2_run ? `, Step 2 run ${checks.step2_run}` : ", no Step 2 tree"}.

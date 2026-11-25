@@ -37,7 +37,8 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Respons
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .config import DEFAULTS, load_config, save_config, shared_projects_root
+from .config import (DEFAULTS, ITOL_KEY_PATH, itol_api_key, load_config, save_config,
+                     shared_projects_root)
 from .jobs import JobManager
 from .request_safety import install_request_safety
 from .sra import (
@@ -1352,8 +1353,18 @@ def api_cohort_report_status(name: str):
             offered = json.loads(proc.stdout)
     except (subprocess.SubprocessError, OSError, ValueError):
         pass
+    # Sending the tree to iTOL: whether there is a tree to send, whether this
+    # user has a key (never the key itself), and where the last one went.
+    last_upload: Dict[str, Any] = {}
+    try:
+        last_upload = json.loads((out / "itol_upload.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    itol = {"available": (out / "itol_batch.zip").is_file(), "configured": bool(itol_api_key()),
+            "key_file": str(ITOL_KEY_PATH), "project": str(load_config().get("itol_project", "") or ""),
+            "last": last_upload}
     return JSONResponse({"project": name, "exists": (out / "cohort_report.html").is_file(),
-                         "files": files, "checks": checks,
+                         "files": files, "checks": checks, "itol": itol,
                          "fields": offered.get("fields", []), "settings": offered.get("settings", {})})
 
 
@@ -1399,6 +1410,58 @@ def api_cohort_report_build(name: str, choices: Optional[CohortReportChoices] = 
     job_id = job_manager.start_job(name=f"{name} — cohort report", command=command,
                                    cwd=project_dir, env=env)
     return JSONResponse({"job_id": job_id})
+
+
+class ItolUpload(BaseModel):
+    """Where in the user's iTOL account the cohort tree should go."""
+    itol_project: str
+    tree_name: Optional[str] = None
+    include_popup: bool = True
+
+
+@app.post("/api/projects/{name}/cohort-report/itol-upload")
+def api_cohort_itol_upload(name: str, payload: ItolUpload):
+    """Send the cohort tree and its annotations to the user's iTOL account.
+
+    This is the one place the cohort report sends anything outside the lab, and
+    it runs only on this request. The API key goes to bin/itol_upload.py through
+    its environment, never on the command line and never back to the browser."""
+    project_dir = _get_project_dir(name)
+    if project_dir is None:
+        raise HTTPException(404, f"Project not found: {name}")
+    if not (project_dir / _COHORT_DIRNAME / "itol_batch.zip").is_file():
+        raise HTTPException(400, "This project has no tree to send. Rebuild the cohort report "
+                                 "after a vSNP Step 2 run.")
+    key = itol_api_key()
+    if not key:
+        raise HTTPException(400, f"No iTOL API key is set. Save yours in {ITOL_KEY_PATH} on this "
+                                 "server, readable only by you.")
+    itol_project = _field_arg(payload.itol_project)
+    if not itol_project:
+        raise HTTPException(400, "Name the iTOL project the tree should go into.")
+    command = [sys.executable, str(_BIN_DIR / "itol_upload.py"), "--project", str(project_dir),
+               f"--itol-project={itol_project}", f"--tree-name={_field_arg(payload.tree_name or name)}"]
+    if not payload.include_popup:
+        command.append("--no-popup")
+    env = {"PYTHONPATH": str(_BIN_DIR), "PATH": os.environ.get("PATH", ""), "ITOL_API_KEY": key}
+    for passthrough in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR"):
+        if os.environ.get(passthrough):
+            env[passthrough] = os.environ[passthrough]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=180, env=env)
+        outcome = json.loads(proc.stdout.strip().splitlines()[-1])
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "iTOL did not answer in time. Check the iTOL project before sending again.")
+    except (OSError, ValueError, IndexError):
+        raise HTTPException(500, "The upload could not be run on this server.")
+    if not outcome.get("ok"):
+        raise HTTPException(502, outcome.get("message") or "iTOL did not accept the upload.")
+    cfg = load_config()
+    if cfg.get("itol_project") != itol_project:
+        cfg["itol_project"] = itol_project
+        save_config(cfg)
+    return JSONResponse({"ok": True, "tree_id": outcome.get("tree_id"), "url": outcome.get("url"),
+                         "warnings": outcome.get("warnings") or [], "files": outcome.get("files") or []})
 
 
 # ---------------------------------------------------------------------------

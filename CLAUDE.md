@@ -50,6 +50,8 @@ Authoritative build spec: `SPEC_BUILD.md`.
                        as sheets for the iTOL annotation editor (itol/,
                        itol_bundle.zip, itol_batch.zip); writes files, uploads
                        nothing
+    itol_upload.py     sends itol_batch.zip to the user's iTOL account when a
+                       person asks (GUI "Send to iTOL"); key from ITOL_API_KEY
   conda_setup/environment.yml   env name amr_plus
   conda_setup/typing/*.yml      one env per typing tool (they do not solve together)
   deploy/install.sh, INSTALL.md

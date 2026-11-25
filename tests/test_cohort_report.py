@@ -226,6 +226,37 @@ def test_report_is_built_from_the_project_folder(tmp_path):
     assert row["MLST"] == "ST10" and row["Serovar"] == "Dublin"
 
 
+def test_a_tree_mixing_renamed_tips_and_sample_names_is_matched_whole(tmp_path):
+    # Three of the lab's isolates carry their own names on the tree. Three
+    # imported genomes have no such name and sit there under their sample
+    # names. Neither half outnumbers the other, and all six are on the tree.
+    project = _project(tmp_path)
+    for name in ("PUB1", "PUB2", "PUB3"):
+        _isolate(project, name, "10")
+    (project / "sample_crosswalk.tsv").write_text(
+        "run\tisolate\tstate\nS1\tISO-1\tPR\nS2\tISO-2\tPR\nS3\tISO-3\tSP\n"
+        "PUB1\t\tMG\nPUB2\t\tMG\nPUB3\t\tMG\n")
+    tree = next((project / "step2").rglob("x-All_2026.tre"))
+    tree.write_text("((ISO-1:0.1,ISO-2:0.1):0.2,((ISO-3:0.4,((PUB1:0.1,PUB2:0.1):0.1,PUB3:0.2):0.1):0.1,root:0.01):0.1);")
+    with open(next((project / "step2").rglob("x-All.fasta")), "a") as fh:
+        fh.write(">PUB1\nTTTTAAAT\n>PUB2\nTTTTAATT\n>PUB3\nTTTTATTT\n")
+    result = cohort_report.build(project, make_pdf=False, log=lambda _m: None)
+    assert result["label_column"] == "isolate"
+    assert result["in_tree"] == 6 and result["problems"] == []
+    table = (project / "cohort_report" / "cohort_table.tsv").read_text(encoding="utf-8").splitlines()
+    assert sorted(line.split("\t")[0] for line in table[1:]) == ["ISO-1", "ISO-2", "ISO-3", "PUB1", "PUB2", "PUB3"]
+
+
+def test_sample_names_on_the_tree_need_no_label_column(tmp_path):
+    project = _project(tmp_path)
+    tree = next((project / "step2").rglob("x-All_2026.tre"))
+    tree.write_text("((S1:0.1,S2:0.1):0.2,(S3:0.4,root:0.01):0.1);")
+    next((project / "step2").rglob("x-All.fasta")).write_text(
+        ">S1\nAAAAAAAA\n>S2\nAAAAAAAT\n>S3\nTTTTAAAA\n>root\nAAAAAAAA\n")
+    result = cohort_report.build(project, make_pdf=False, log=lambda _m: None)
+    assert result["label_column"] is None and result["in_tree"] == 3 and result["problems"] == []
+
+
 def test_report_without_a_tree_says_so_and_still_builds(tmp_path):
     project = _project(tmp_path, with_tree=False)
     result = cohort_report.build(project, make_pdf=False, log=lambda _m: None)

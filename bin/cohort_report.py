@@ -251,6 +251,24 @@ def best_column(header: List[str], rows: List[Dict[str, str]], wanted: set) -> T
     return best, hits
 
 
+def best_label_column(header: List[str], by_sample: Dict[str, Dict[str, str]], samples: set,
+                      tips: set) -> Optional[str]:
+    """The column that, used for display names, puts the most isolates on the
+    tree, or None when no column beats the sample names themselves.
+
+    An isolate with no value in the column keeps its sample name, as it does
+    everywhere else in the report. So a tree that mixes renamed tips with plain
+    sample names (a lab's own isolates beside imported public genomes) is
+    matched as a whole, not judged on its renamed half alone."""
+    best, hits = None, len(samples & tips)
+    for col in header:
+        names = {by_sample.get(s, {}).get(col, "") or s for s in samples}
+        n = len(names & tips)
+        if n > hits:
+            best, hits = col, n
+    return best
+
+
 def informative_columns(columns: List[str], isolates: List["Isolate"]) -> Tuple[List[str], Dict[str, str], Dict[str, str]]:
     """Sort a sheet's columns for the printed table: (shown, constant, duplicate).
 
@@ -578,9 +596,7 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
         problems.append(f"The label column '{label_column}' is not in the metadata sheet.")
         label_column = None
     if not label_column and rows and tip_names:
-        guess, hits = best_column(header, rows, set(tip_names))
-        if guess and hits > len(samples & set(tip_names)):
-            label_column = guess
+        label_column = best_label_column(header, by_sample, samples, set(tip_names))
     meta_cols = [h for h in header if h not in (sample_col, label_column)]
 
     # ---- the chosen fields: each must exist, and none is guessed ----
@@ -898,7 +914,7 @@ def build(project: Path, settings: Optional[Settings] = None, metadata: Optional
                      "report, as files for iTOL (itol.embl.de) and as sheets for its annotation "
                      "editor, where the figure can be restyled by hand. Nothing is uploaded by this "
                      "report.</p>")
-    if figures.get("heat"):
+    if figures.get("heat") and pair_values:
         parts.append('<h2 class="newpage">Pairwise distances</h2>')
         parts.append(f"<p>Across {len(pair_values):,} pairs: minimum {min(pair_values):,}, median "
                      f"{statistics.median(pair_values):,.0f}, maximum {max(pair_values):,} SNPs.</p>")
